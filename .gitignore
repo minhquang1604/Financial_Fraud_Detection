@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data files
+data/raw/
+data/processed/
+data/test/
+*.csv
+*.parquet
+
+# Models
+model/
+models/
+*.pkl
+*.pickle
+*.h5
+*.pth
+
+# MLflow
+mlruns/
+mlartifacts/
+mlflow.db
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local

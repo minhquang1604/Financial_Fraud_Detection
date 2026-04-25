@@ -1,0 +1,13 @@
+duckdb
+numpy
+pandas
+joblib
+mlflow
+xgboost
+scikit-learn
+fastapi
+uvicorn
+pydantic
+kafka-python
+requests
+pyarrow
