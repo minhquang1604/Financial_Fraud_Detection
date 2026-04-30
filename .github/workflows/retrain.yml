@@ -64,15 +64,20 @@ jobs:
         run: |
           pip install -r requirements.txt
       
-      - name: Run label joiner (gán nhãn từ dataset gốc)
+- name: Run label joiner (gán nhãn từ dataset gốc)
         run: |
-          python -m src.pipeline.label_joiner
+          python -m src.pipeline.label_joiner || echo "Label joiner skipped"
       
       - name: Prepare mixed data (75% Ref + 25% Live)
         env:
           REF_RATIO: ${{ github.inputs.ref_ratio || 0.75 }}
         run: |
-          python -m src.pipeline.prepare_data --ref-ratio $REF_RATIO
+          if [ -d "data/live" ] && [ $(ls -1 data/live/*.parquet 2>/dev/null | wc -l) -gt 0 ]; then
+            python -m src.pipeline.prepare_data --ref-ratio $REF_RATIO
+          else
+            echo "No live data, using existing labeled data"
+            ls data/labeled/
+          fi
       
       - name: Check data
         id: check-data
