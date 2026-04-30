@@ -1,13 +1,13 @@
 import os
-
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 import sys
-sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "train"))
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, PROJECT_ROOT)
 
 import mlflow
 import mlflow.sklearn
 import joblib
-from train.utils import get_feature_columns
+from src.train.utils import get_feature_columns
 
 
 MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5000")

@@ -1,17 +1,17 @@
 import os
 import sys
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "train"))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, PROJECT_ROOT)
 
 import pandas as pd
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from contextlib import asynccontextmanager
 
-from train.utils import engineer_features, get_feature_columns
-from api.schemas import PredictionRequest, PredictionResponse
-from api.model_loader import get_model
+from src.train.utils import engineer_features, get_feature_columns
+from src.api.schemas import PredictionRequest, PredictionResponse
+from src.api.model_loader import get_model
 
 
 model = None
@@ -117,7 +117,7 @@ async def predict(request: PredictionRequest):
         live_record["fraud_probability"] = float(prob)
         live_record["prediction_time"] = pd.Timestamp.now().isoformat()
         
-        live_file = os.path.join(LIVE_ DATA_ DIR, "live_predictions.parquet")
+        live_file = os.path.join(LIVE_DATA_DIR, "live_predictions.parquet")
         live_df = pd.DataFrame([live_record])
         
         if os.path.exists(live_file):

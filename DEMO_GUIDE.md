@@ -98,7 +98,7 @@ print(f'Tạo staging: {len(staging_df)} records')
 
 ```bash
 # Terminal 1: Start Zookeeper + Kafka
-docker-compose -f docker-compose.mlops.yml up -d zookeeper kafka
+docker-compose up -d zookeeper kafka
 
 # Terminal 2: Start FastAPI
 python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000 &

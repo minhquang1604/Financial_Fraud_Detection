@@ -7,13 +7,6 @@ from typing import Dict, List, Optional, Any
 import numpy as np
 import pandas as pd
 import joblib
-from evidently.dashboard import Dashboard
-from evidently.tabs import (
-    DataDriftTab,
-    CatTargetDriftTab,
-    RegressionPerformanceTab,
-    ClassificationPerformanceTab,
-)
 from scipy import stats as scipy_stats
 
 logging.basicConfig(
@@ -47,19 +40,12 @@ class DriftMonitor:
     def detect_data_drift(self, current_data: pd.DataFrame) -> Dict[str, Any]:
         logger.info("Detecting data drift...")
         
-        data_dift_report = Dashboard(
-            tabs=[DataDriftTab()])
-        
-        data_dift_report.calculate(
-            reference_data=self.reference_data[self.feature_columns],
-            current_data=current_data[self.feature_columns],
-        )
+        os.makedirs(self.output_dir, exist_ok=True)
         
         report_path = os.path.join(
             self.output_dir, 
             f"data_drift_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
         )
-        data_dift_report.save_html(report_path)
         
         drift_score = self._calculate_drift_score(
             self.reference_data[self.feature_columns],

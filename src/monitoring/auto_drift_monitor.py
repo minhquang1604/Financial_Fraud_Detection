@@ -30,6 +30,7 @@ class AutoRetrainTrigger:
     DRIFT_THRESHOLD = 0.05
     F1_THRESHOLD = 0.5
     MIN_NEW_DATA = 1000
+    RETRAIN_COOLDOWN_HOURS = 24  # Min time between retrains
     STAGING_DIR = os.path.join(PROJECT_ROOT, "data", "staging")
     LABELED_DIR = os.path.join(PROJECT_ROOT, "data", "labeled")
     MODEL_DIR = os.path.join(PROJECT_ROOT, "model")
@@ -51,9 +52,17 @@ class AutoRetrainTrigger:
         self.drift_monitor = None
         self.data_manager = DataVersionManager()
         self.webhook_url = os.environ.get("DRIFT_WEBHOOK_URL")
+        self.last_retrain_time = None
     
     def _load_reference_data(self) -> pd.DataFrame:
-        return pd.read_parquet(self.reference_data_path)
+        df = pd.read_parquet(self.reference_data_path)
+        
+        sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "train"))
+        from utils import engineer_features
+        
+        df = engineer_features(df)
+        
+        return df
     
     def _load_model(self):
         import joblib
@@ -72,7 +81,17 @@ class AutoRetrainTrigger:
             df = pd.read_parquet(os.path.join(self.STAGING_DIR, f))
             dfs.append(df)
         
-        return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+        if not dfs:
+            return pd.DataFrame()
+        
+        combined = pd.concat(dfs, ignore_index=True)
+        
+        sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "train"))
+        from utils import engineer_features
+        
+        combined = engineer_features(combined)
+        
+        return combined
     
     def _load_labeled_data(self) -> pd.DataFrame:
         if not os.path.exists(self.LABELED_DIR):
@@ -83,7 +102,14 @@ class AutoRetrainTrigger:
             return pd.DataFrame()
         
         latest = os.path.join(self.LABELED_DIR, files[-1])
-        return pd.read_parquet(latest)
+        df = pd.read_parquet(latest)
+        
+        sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "train"))
+        from utils import engineer_features
+        
+        df = engineer_features(df)
+        
+        return df
     
     def _check_data_available(self) -> bool:
         staging_df = self._load_staging_data()
@@ -190,10 +216,18 @@ class AutoRetrainTrigger:
             self._send_webhook_alert(report)
         
         if should_trigger and self.auto_retrain:
+            # Check cooldown to avoid too frequent retrain
+            if self.last_retrain_time:
+                hours_since = (datetime.now() - self.last_retrain_time).total_seconds() / 3600
+                if hours_since < self.RETRAIN_COOLDOWN_HOURS:
+                    logger.info(f"Retrain on cooldown. {self.RETRAIN_COOLDOWN_HOURS - hours_since:.1f}h remaining. Skipping...")
+                    return False
+            
             if self._check_data_available():
                 retrain_result = self._run_retrain()
                 
                 if retrain_result.get('success'):
+                    self.last_retrain_time = datetime.now()
                     self._compare_and_deploy(retrain_result.get('metrics', {}))
                     return True
             else:
@@ -215,14 +249,7 @@ class AutoRetrainTrigger:
                 headers["Authorization"] = f"Bearer {token}"
             
             payload = {
-                "event_type": "drift_alert",
-                "client_payload": {
-                    "timestamp": datetime.now().isoformat(),
-                    "data_drift": report.get("data_drift", {}),
-                    "concept_drift": report.get("concept_drift", {}),
-                    "max_psi": report.get("data_drift", {}).get("max_psi", 0),
-                    "alert_triggered": report.get("alert_triggered", False)
-                }
+                "event_type": "drift_alert"
             }
             
             response = requests.post(
@@ -309,7 +336,14 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, required=True, help="Model path")
     parser.add_argument("--interval", type=int, default=300, help="Check interval in seconds")
     parser.add_argument("--no-auto-retrain", action="store_true", help="Disable auto retrain")
+    parser.add_argument("--webhook-url", type=str, default=None, help="Webhook URL for GitHub Actions")
+    parser.add_argument("--pat-token", type=str, default=None, help="Personal Access Token for webhook")
     args = parser.parse_args()
+    
+    if args.webhook_url:
+        os.environ["DRIFT_WEBHOOK_URL"] = args.webhook_url
+    if args.pat_token:
+        os.environ["PAT_TOKEN"] = args.pat_token
     
     model_data = joblib.load(args.model)
     features = model_data.get("features", [])

@@ -1,6 +1,8 @@
 name: MLOps Retrain Pipeline
 
 on:
+  repository_dispatch:
+    types: [drift_alert]
   workflow_dispatch:
     inputs:
       ref_ratio:
