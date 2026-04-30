@@ -20,7 +20,7 @@ on:
           - drift_alert
 
 env:
-  # MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}  # Uncomment nếu dùng remote MLflow
+  MLFLOW_TRACKING_URI: http://localhost:5000
   # AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}  # Uncomment nếu dùng S3
   # AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
