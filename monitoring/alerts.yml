@@ -1,0 +1,53 @@
+groups:
+  - name: fraud-detection-alerts
+    interval: 30s
+    rules:
+      - alert: DataDriftDetected
+        expr: data_drift_score < 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Data drift detected in fraud detection model"
+          description: "Data drift score is {{ $value }}, below threshold of 0.05"
+
+      - alert: ConceptDriftDetected
+        expr: concept_drift_score > 0.1
+        for: 5m
+        labels:
+          severity: critical
+          component: monitoring
+        annotations:
+          summary: "Concept drift detected in fraud detection model"
+          description: "Concept drift score is {{ $value }}, exceeds threshold of 0.1"
+
+      - alert: ModelPerformanceDegraded
+        expr: model_f1_score < 0.5
+        for: 10m
+        labels:
+          severity: critical
+          component: model
+        annotations:
+          summary: "Model F1 score degraded"
+          description: "Model F1 score is {{ $value }}, below acceptable threshold"
+
+      - alert: HighFraudPredictionRatio
+        expr: fraud_predictions_total{prediction="1"} > fraud_predictions_total{prediction="0"}
+        for: 5m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "High fraud prediction ratio detected"
+          description: "Fraud prediction ratio exceeds normal threshold"
+
+      - alert: InferenceLatencyHigh
+        expr: inference_latency_seconds > 1.0
+        for: 2m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "High inference latency detected"
+          description: "Inference latency is {{ $value }}s, exceeds 1.0s threshold"

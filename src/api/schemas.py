@@ -33,11 +33,6 @@ class TransactionFeatures(BaseModel):
     V28: float
     Amount: float = Field(gt=0)
     Time: float
-    hour_of_day: int = Field(ge=0, le=23)
-    is_night_transaction: int = Field(ge=0, le=1)
-    amt_to_mean_ratio: float
-    is_high_amount: int = Field(ge=0, le=1)
-    log_amount: float
 
 
 class PredictionRequest(BaseModel):

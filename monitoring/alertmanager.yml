@@ -1,0 +1,39 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 12h
+  receiver: 'github'
+  routes:
+    - match:
+        severity: critical
+      receiver: 'github'
+      continue: true
+
+receivers:
+  - name: 'github'
+    webhook_configs:
+      - url: 'https://api.github.com/repos/{owner}/{repo}/dispatches'
+        http_config:
+          basic_auth:
+            password: ${{ secrets.GITHUB_TOKEN }}
+        headers:
+          Content-Type: application/json
+        payload: |
+          {
+            "event_type": "drift_alert",
+            "client_payload": {
+              "alert": "{{ .GroupLabels.Klass }}",
+              "severity": "{{ .GroupLabels.severity }}"
+            }
+          }
+
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'instance']

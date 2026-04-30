@@ -1,0 +1,153 @@
+name: MLOps Retrain Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref_ratio:
+        description: 'Reference data ratio (0.0-1.0)'
+        required: false
+        type: number
+        default: 0.75
+      trigger_type:
+        description: 'Trigger type'
+        required: true
+        type: choice
+        options:
+          - manual
+          - scheduled
+          - drift_alert
+
+env:
+  # MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}  # Uncomment nếu dùng remote MLflow
+  # AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}  # Uncomment nếu dùng S3
+  # AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+  prepare-data:
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Run label joiner (gán nhãn từ dataset gốc)
+        run: |
+          python -m src.pipeline.label_joiner
+      
+      - name: Prepare mixed data (75% Ref + 25% Live)
+        env:
+          REF_RATIO: ${{ github.inputs.ref_ratio || 0.75 }}
+        run: |
+          python -m src.pipeline.prepare_data --ref-ratio $REF_RATIO
+      
+      - name: Check data
+        id: check-data
+        run: |
+          ls -la data/mixed/
+          echo "mixed_files=$(ls -1 data/mixed/*.parquet 2>/dev/null | wc -l)" >> $GITHUB_OUTPUT
+      
+      - name: Upload mixed data
+        if: steps.check-data.outputs.mixed_files > 0
+        uses: actions/upload-artifact@v4
+        with:
+          name: mixed-data
+          path: data/mixed/
+          retention-days: 7
+
+  retrain:
+    needs: [setup, prepare-data]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Download mixed data
+        uses: actions/download-artifact@v4
+        with:
+          name: mixed-data
+          path: data/mixed/
+          merge: true
+      
+      - name: Run retrain pipeline (với SMOTE)
+        run: |
+          python -m src.pipeline.retrain_pipeline
+      
+      - name: Evaluate model
+        run: |
+          python -c "
+          import joblib
+          model = joblib.load('model/fraud_model_retrain.pkl')
+          print(f'Model metrics: {model.get(\"metrics\", {})}')
+          print(f'SMOTE applied: {model.get(\"smote_applied\", False)}')
+          "
+      
+      - name: Upload model
+        uses: actions/upload-artifact@v4
+        with:
+          name: fraud-model
+          path: model/
+          retention-days: 30
+
+  deploy:
+    needs: retrain
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Download model
+        uses: actions/download-artifact@v4
+        with:
+          name: fraud-model
+          path: model/
+      
+      - name: Deploy to staging
+        run: |
+          echo "Deploying model..."
+          ls -la model/fraud_model_retrain.pkl
+      
+      - name: Record deployment
+        run: |
+          echo "Model deployed at $(date)"

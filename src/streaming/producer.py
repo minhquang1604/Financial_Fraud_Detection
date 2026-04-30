@@ -7,11 +7,21 @@ from kafka.errors import KafkaError
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-TEST_DATA_PATH = os.path.join(PROJECT_ROOT, "data", "test", "test_data.parquet")
+STAGING_DIR = os.path.join(PROJECT_ROOT, "data", "staging")
+KAFKA_DATA_PATH = os.environ.get("KAFKA_DATA_PATH", os.path.join(STAGING_DIR, "staging_batch_v1.parquet"))
 
 BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 TOPIC_NAME = "transaction_events"
 DELAY_SECONDS = 0.1
+
+
+def get_data_path():
+    if os.path.exists(KAFKA_DATA_PATH):
+        return KAFKA_DATA_PATH
+    files = [f for f in os.listdir(STAGING_DIR) if f.endswith('.parquet')]
+    if files:
+        return os.path.join(STAGING_DIR, files[0])
+    raise FileNotFoundError(f"No data found in {STAGING_DIR}")
 
 
 def create_producer():
@@ -56,22 +66,19 @@ def prepare_payload(row):
         "V28": float(row["V28"]),
         "Amount": float(row["Amount"]),
         "Time": float(row["Time"]),
-        "hour_of_day": int(row["hour_of_day"]),
-        "is_night_transaction": int(row["is_night_transaction"]),
-        "amt_to_mean_ratio": float(row["amt_to_mean_ratio"]),
-        "is_high_amount": int(row["is_high_amount"]),
-        "log_amount": float(row["log_amount"])
     }
     return payload
 
 
 def run_producer():
-    if not os.path.exists(TEST_DATA_PATH):
-        print(f"Test data not found at {TEST_DATA_PATH}")
+    try:
+        data_path = get_data_path()
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
         return
     
-    df = pd.read_parquet(TEST_DATA_PATH)
-    print(f"Loaded {len(df)} test records from {TEST_DATA_PATH}")
+    df = pd.read_parquet(data_path)
+    print(f"Loaded {len(df)} records from {data_path}")
     
     producer = create_producer()
     print(f"Producer connected to {BOOTSTRAP_SERVERS}")
