@@ -31,7 +31,7 @@ class TransactionFeatures(BaseModel):
     V26: float
     V27: float
     V28: float
-    Amount: float = Field(gt=0)
+    Amount: float = Field(ge=0)
     Time: float
 
 

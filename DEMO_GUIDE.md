@@ -71,6 +71,7 @@ fraud-detection-project/
 ├── docker-compose.mlops.yml  # Full stack (Kafka, API, MLflow...)
 └── requirements.txt
 ```
+source venv/bin/activate
 
 ## Demo Commands
 
@@ -97,12 +98,17 @@ print(f'Tạo staging: {len(staging_df)} records')
 ### Bước 2: Start Services
 
 ```bash
-# Terminal 1: Start Zookeeper + Kafka
-docker-compose up -d zookeeper kafka
+# Terminal 1: Start Zookeeper + Kafka + MLflow
+docker-compose -f docker-compose.mlops.yml up -d zookeeper kafka mlflow
+
+# Set MLflow tracking URI (cho local dev)
+export MLFLOW_TRACKING_URI="http://localhost:5000"
 
 # Terminal 2: Start FastAPI
 python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000 &
 ```
+
+**Note:** MLflow tracking UI available at http://localhost:5000
 
 ### Bước 3: Start Producer + Consumer
 
@@ -200,8 +206,11 @@ ls -la data/mixed/
 # Xem model mới
 ls -la model/
 
-# Xem MLflow
+# Xem MLflow UI
 # http://localhost:5000
+
+# Verify model loaded from MLflow:
+# API logs sẽ hiển thị: "Model loaded from run: xxx, threshold: xxx"
 ```
 
 ## Auto Mode (chạy liên tục)

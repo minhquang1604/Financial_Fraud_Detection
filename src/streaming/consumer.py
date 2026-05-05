@@ -24,7 +24,6 @@ def create_consumer():
 def call_prediction_api(features: dict) -> dict:
     url = f"{API_URL}/predict"
     payload = {"features": features}
-    
     try:
         response = requests.post(url, json=payload, timeout=5)
         response.raise_for_status()

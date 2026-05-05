@@ -15,7 +15,7 @@ from sklearn.metrics import (
     precision_recall_curve
 )
 
-from utils import engineer_features, get_feature_columns
+from src.train.utils import engineer_features, get_feature_columns
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

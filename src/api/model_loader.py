@@ -19,8 +19,17 @@ def load_model_from_mlflow():
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
     
     client = mlflow.tracking.MlflowClient()
+    
+    experiments = client.search_experiments(filter_string="name='FraudGuard_XGBoost_Improved'")
+    if not experiments:
+        experiments = client.search_experiments(filter_string="name='Default'")
+    
+    if not experiments:
+        raise ValueError("No experiment found in MLflow")
+    
+    experiment_id = experiments[0].experiment_id
     runs = client.search_runs(
-        experiment_names=["FraudGuard_XGBoost_Improved"],
+        experiment_ids=[experiment_id],
         filter_string="status='FINISHED'",
         max_results=1,
         order_by=["metrics.AUPRC DESC"]
@@ -30,19 +39,22 @@ def load_model_from_mlflow():
         raise ValueError("No finished runs found in MLflow")
     
     best_run = runs[0]
-    model_uri = f"runs:/{best_run.info.run_id}/fraud_model_xgboost"
-    model = mlflow.sklearn.load_model(model_uri)
+    
+    import joblib
+    import tempfile
+    import os
+    
+    artifact_path = client.download_artifacts(best_run.info.run_id, "fraud_model.pkl", dst_dir=tempfile.mkdtemp())
+    model_data = joblib.load(artifact_path)
     
     threshold = best_run.data.metrics.get("threshold", 0.5)
-    features = get_feature_columns()
-    reference_stats = best_run.data.metrics.get("reference_stats")
     
-    print(f"Model loaded from run: {best_run.info.run_id}, threshold: {threshold}")
+    print(f"Model loaded from MLflow run: {best_run.info.run_id}, threshold: {threshold}")
     return {
-        "model": model,
+        "model": model_data["model"],
         "threshold": threshold,
-        "features": features,
-        "reference_stats": reference_stats
+        "features": get_feature_columns(),
+        "reference_stats": None
     }
 
 
