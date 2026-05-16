@@ -85,6 +85,18 @@ class MonitoringServer:
         
         self.reference_data = pd.read_parquet(self.reference_data_path)
         
+        stats = {
+            "mean_amt": self.reference_data["Amount"].mean(),
+            "median_amt": self.reference_data["Amount"].median(),
+            "threshold_95": self.reference_data["Amount"].quantile(0.95)
+        }
+        
+        reference_df = pd.DataFrame({
+            "Amount": [stats["mean_amt"], stats["median_amt"], stats["threshold_95"]]
+        })
+        
+        self.reference_data = engineer_features(self.reference_data, reference_df=reference_df)
+        
         logger.info(f"Reference data loaded: {len(self.reference_data)} records")
         
         return True

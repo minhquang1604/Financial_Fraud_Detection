@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 
 from src.train.utils import engineer_features, get_feature_columns
 from src.api.schemas import PredictionRequest, PredictionResponse
-from src.api.model_loader import get_model
+from src.api.model_loader import get_model, predict_proba_safe
 
 
 model = None
@@ -108,7 +108,7 @@ async def predict(request: PredictionRequest):
         feature_cols = get_feature_columns()
         X = df[feature_cols]
         
-        prob = model.predict_proba(X)[0, 1]
+        prob = predict_proba_safe(model_data, X)[0]
         pred = int(prob >= threshold)
         
         # Luu vao live_data (B1: Luu predictions)
@@ -130,9 +130,12 @@ async def predict(request: PredictionRequest):
             transaction_time=raw_features['Time'],
             fraud_probability=float(prob),
             prediction=pred,
-            message="Fraud detected" if pred == 1 else "Normal transaction"
+            message="🚨🚨 FRAUD DETECTED 🚨🚨" if pred == 1 else "✅ Normal transaction"
         )
     except Exception as e:
+        import traceback
+        print(f"Predict error: {e}")
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 
