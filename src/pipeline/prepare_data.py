@@ -56,7 +56,7 @@ class DataMixer:
     DEFAULT_REF_RATIO = 0.75
 
     MIN_NEW_RECORDS = 100
-    MIN_FRAUD_SAMPLES = 10
+    MIN_FRAUD_SAMPLES = 3
 
     def __init__(
         self,
