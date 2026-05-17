@@ -75,15 +75,19 @@ jobs:
         run: |
           python -m src.pipeline.label_joiner || echo "Label joiner skipped"
 
-      - name: Prepare mixed data (75% Ref + 25% Live)
+      - name: Prepare mixed data (75% Ref + 25% Labeled)
         env:
           REF_RATIO: ${{ github.inputs.ref_ratio || 0.75 }}
         run: |
-          if [ -d "data/live" ] && [ $(ls -1 data/live/*.parquet 2>/dev/null | wc -l) -gt 0 ]; then
+          # Check if labeled data exists
+          if [ -d "data/labeled" ] && [ $(ls -1 data/labeled/*.parquet 2>/dev/null | wc -l) -gt 0 ]; then
+            python -m src.pipeline.prepare_data --ref-ratio $REF_RATIO
+          elif [ -d "data/realtime" ] && [ $(ls -1 data/realtime/*.parquet 2>/dev/null | wc -l) -gt 0 ]; then
+            python -m src.pipeline.label_joiner
             python -m src.pipeline.prepare_data --ref-ratio $REF_RATIO
           else
-            echo "No live data, using existing labeled data"
-            ls data/labeled/
+            echo "No labeled or realtime data found. Using reference data only."
+            python -m src.pipeline.prepare_data --ref-ratio 1.0
           fi
 
       - name: Check data
