@@ -56,3 +56,8 @@ mlflow.db
 # Environment
 .env
 .env.local
+# AWS CLI (local)
+aws/
+
+# Data
+data/

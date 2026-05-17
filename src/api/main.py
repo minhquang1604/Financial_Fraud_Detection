@@ -19,13 +19,6 @@ model_data = None
 threshold = 0.5
 reference_stats = None
 
-LIVE_DATA_DIR = os.path.join(os.path.dirname(\
-    os.path.dirname(\
-    os.path.dirname(\
-    os.path.abspath(__file__)))), "data", "live")
-
-os.makedirs(LIVE_DATA_DIR, exist_ok=True)
-
 
 class RunningStats:
     def __init__(self, window_size: int = 10000):
@@ -110,21 +103,6 @@ async def predict(request: PredictionRequest):
         
         prob = predict_proba_safe(model_data, X)[0]
         pred = int(prob >= threshold)
-        
-        # Luu vao live_data (B1: Luu predictions)
-        live_record = raw_features.copy()
-        live_record["prediction"] = pred
-        live_record["fraud_probability"] = float(prob)
-        live_record["prediction_time"] = pd.Timestamp.now().isoformat()
-        
-        live_file = os.path.join(LIVE_DATA_DIR, "live_predictions.parquet")
-        live_df = pd.DataFrame([live_record])
-        
-        if os.path.exists(live_file):
-            existing_df = pd.read_parquet(live_file)
-            live_df = pd.concat([existing_df, live_df], ignore_index=True)
-        
-        live_df.to_parquet(live_file, index=False)
         
         return PredictionResponse(
             transaction_time=raw_features['Time'],
