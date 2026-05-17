@@ -178,10 +178,45 @@ class RetrainPipeline:
             mlflow.log_param("scale_pos_weight", scale_pos_weight)
             mlflow.log_param("threshold", best_threshold)
             mlflow.log_param("version", self.version or "latest")
+            mlflow.log_param("smote_applied", smote_applied)
             
-            logger.info("Skipping MLflow logging (no AWS credentials in CI)")
-            # mlflow.log_metric("AUPRC", auprc)
-            # mlflow.log_metric("F1", f1)
+            mlflow.log_metric("AUPRC", float(auprc))
+            mlflow.log_metric("F1", float(best_f1))
+            
+            # Save model to S3 and register
+            import tempfile
+            with tempfile.TemporaryDirectory() as tmpdir:
+                model_path = os.path.join(tmpdir, "fraud_model_retrain")
+                mlflow.sklearn.save_model(model, model_path)
+                mlflow.log_artifacts(tmpdir, artifact_path="fraud_model_retrain")
+            
+            # Register model to FraudDetectionModel (same as train.py)
+            from mlflow.tracking import MlflowClient
+            client = MlflowClient()
+            try:
+                client.create_registered_model("FraudDetectionModel")
+            except Exception:
+                pass
+            
+            run_id = run.info.run_id
+            model_uri = f"runs:/{run_id}/fraud_model_retrain"
+            
+            client.create_model_version(
+                name="FraudDetectionModel",
+                source=model_uri,
+                run_id=run_id
+            )
+            
+            # Auto promote if F1 > 0.8
+            latest_versions = client.get_latest_versions("FraudDetectionModel", stages=None)
+            if latest_versions and float(best_f1) > 0.8:
+                new_version = latest_versions[-1].version
+                client.transition_model_version_stage(
+                    name="FraudDetectionModel",
+                    version=new_version,
+                    stage="Production"
+                )
+                logger.info(f"Promoted model v{new_version} to Production")
         
         model_data = {
             "model": model,
