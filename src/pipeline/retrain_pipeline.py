@@ -182,7 +182,11 @@ class RetrainPipeline:
             mlflow.log_metric("AUPRC", auprc)
             mlflow.log_metric("F1", f1)
             
-            mlflow.sklearn.log_model(model, "fraud_model_retrain")
+            import tempfile
+            with tempfile.TemporaryDirectory() as tmpdir:
+                model_path = os.path.join(tmpdir, "fraud_model_retrain")
+                mlflow.sklearn.save_model(model, model_path)
+                mlflow.log_artifacts(tmpdir, artifact_path="fraud_model_retrain")
         
         model_data = {
             "model": model,
