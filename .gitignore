@@ -59,5 +59,10 @@ mlflow.db
 # AWS CLI (local)
 aws/
 
-# Data
-data/
+# Data - ignore temp/runtime folders (not needed for retraining)
+# Note: .parquet files in train/labeled/mixed are tracked via Git LFS
+data/dvc/
+data/realtime/
+data/staging/
+data/processed/
+data/raw/

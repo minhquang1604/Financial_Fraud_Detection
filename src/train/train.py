@@ -34,7 +34,6 @@ from src.train.utils import engineer_features, get_feature_columns
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 TRAIN_DATA_PATH = os.path.join(DATA_DIR, "train", "train_full.parquet")
-PROCESSED_DATA_PATH = os.path.join(DATA_DIR, "processed")
 MODEL_DIR = os.path.join(PROJECT_ROOT, "model")
 
 MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://13.250.11.23:5000")
@@ -50,9 +49,6 @@ def load_and_clean_data():
     df = pd.read_parquet(TRAIN_DATA_PATH)
     
     df = df.sort_values("Time").reset_index(drop=True)
-    
-    os.makedirs(PROCESSED_DATA_PATH, exist_ok=True)
-    df.to_parquet(f'{PROCESSED_DATA_PATH}/cleaned_train.parquet', index=False)
     
     print(f"Loaded {len(df)} records")
     
