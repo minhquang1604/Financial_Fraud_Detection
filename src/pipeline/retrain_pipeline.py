@@ -198,7 +198,8 @@ class RetrainPipeline:
             except Exception:
                 pass
             
-            run_id = run.info.run_id
+            active_run = mlflow.active_run()
+            run_id = active_run.info.run_id
             model_uri = f"runs:/{run_id}/fraud_model_retrain"
             
             client.create_model_version(
