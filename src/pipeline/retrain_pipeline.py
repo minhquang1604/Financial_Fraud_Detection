@@ -119,15 +119,25 @@ class RetrainPipeline:
         df = self.load_training_data()
         X_train, y_train, X_val, y_val, X_test, y_test, feature_cols = self.prepare_data(df)
         
-        logger.info("Applying SMOTE for class balancing...")
-        smote = SMOTE(random_state=42)
-        X_train_resampled, y_train_resampled = smote.fit_resample(X_train, y_train)
+        fraud_count = (y_train == 1).sum()
+        smote_applied = False
         
-        logger.info(f"After SMOTE: {len(X_train_resampled)} samples "
-                  f"(Class 0: {(y_train_resampled==0).sum()}, "
-                  f"Class 1: {(y_train_resampled==1).sum()})")
+        if fraud_count >= 6:
+            logger.info("Applying SMOTE for class balancing...")
+            smote = SMOTE(random_state=42)
+            X_train_resampled, y_train_resampled = smote.fit_resample(X_train, y_train)
+            smote_applied = True
+            
+            logger.info(f"After SMOTE: {len(X_train_resampled)} samples "
+                      f"(Class 0: {(y_train_resampled==0).sum()}, "
+                      f"Class 1: {(y_train_resampled==1).sum()})")
+            
+            counter = y_train_resampled.value_counts()
+        else:
+            logger.warning(f"Not enough fraud samples for SMOTE (found {fraud_count}, need >= 6). Skipping SMOTE.")
+            X_train_resampled, y_train_resampled = X_train, y_train
+            counter = y_train.value_counts()
         
-        counter = y_train_resampled.value_counts()
         scale_pos_weight = counter[0] / counter[1]
         
         logger.info(f"scale_pos_weight: {scale_pos_weight:.2f}")
@@ -146,7 +156,7 @@ class RetrainPipeline:
             
             model.fit(X_train_resampled, y_train_resampled)
             
-            mlflow.log_param("smote_applied", True)
+            mlflow.log_param("smote_applied", smote_applied)
             
             val_probs = model.predict_proba(X_val)[:, 1]
             best_threshold, best_f1 = self.find_best_threshold(y_val, val_probs)

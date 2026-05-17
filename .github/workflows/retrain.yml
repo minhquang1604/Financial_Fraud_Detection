@@ -135,7 +135,6 @@ jobs:
         with:
           name: mixed-data
           path: data/mixed/
-          merge: true
 
       - name: Run retrain pipeline (voi SMOTE)
         env:
