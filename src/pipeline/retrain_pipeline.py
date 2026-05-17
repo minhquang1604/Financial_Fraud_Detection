@@ -1,5 +1,8 @@
 import os
 import sys
+from dotenv import load_dotenv
+
+load_dotenv()
 import logging
 import json
 from datetime import datetime
@@ -105,6 +108,11 @@ class RetrainPipeline:
     
     def train(self) -> Dict[str, Any]:
         logger.info("Starting retrain pipeline...")
+        
+        import os
+        mlflow_tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5000")
+        mlflow.set_tracking_uri(mlflow_tracking_uri)
+        logger.info(f"MLflow tracking URI: {mlflow_tracking_uri}")
         
         start_time = datetime.now()
         

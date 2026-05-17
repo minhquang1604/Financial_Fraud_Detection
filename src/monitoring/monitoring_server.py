@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "train"))
 from utils import engineer_features, get_feature_columns
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "monitoring"))
-from drift_detector import DriftMonitor
+from evidently_drift import EvidentlyDriftMonitor
 from metrics_exporter import PrometheusMetricsExporter, MetricsCollector
 
 logging.basicConfig(
@@ -110,7 +110,7 @@ class MonitoringServer:
         if not self.load_reference_data():
             raise RuntimeError("Failed to load reference data")
         
-        self.drift_monitor = DriftMonitor(
+        self.drift_monitor = EvidentlyDriftMonitor(
             reference_data=self.reference_data,
             model=self.model,
             feature_columns=self.feature_columns,

@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "monitoring"))
-from drift_detector import DriftMonitor
+from evidently_drift import EvidentlyDriftMonitor
 
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "mlops"))
 from data_version import DataVersionManager
@@ -174,7 +174,7 @@ class AutoRetrainTrigger:
             model = model_data["model"]
             threshold = model_data.get("threshold", 0.5)
             
-            self.drift_monitor = DriftMonitor(
+            self.drift_monitor = EvidentlyDriftMonitor(
                 reference_data=reference_data,
                 model=model,
                 feature_columns=self.feature_columns,

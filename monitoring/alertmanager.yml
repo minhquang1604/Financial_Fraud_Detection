@@ -19,17 +19,17 @@ route:
 receivers:
   - name: 'default'
     webhook_configs:
-      - url: 'http://localhost:5000/webhook'
+      - url: 'http://host.docker.internal:5001/webhook'
         send_resolved: true
 
   - name: 'critical-alerts'
     webhook_configs:
-      - url: 'http://localhost:5000/webhook'
+      - url: 'http://host.docker.internal:5001/webhook'
         send_resolved: false
 
   - name: 'warning-alerts'
     webhook_configs:
-      - url: 'http://localhost:5000/webhook'
+      - url: 'http://host.docker.internal:5001/webhook'
         send_resolved: false
 
 inhibit_rules:

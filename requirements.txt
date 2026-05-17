@@ -15,3 +15,4 @@ evidently
 prometheus-client
 scipy
 imbalanced-learn
+boto3

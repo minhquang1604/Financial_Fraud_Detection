@@ -1,6 +1,9 @@
 import os
 import sys
 import pickle
+from dotenv import load_dotenv
+
+load_dotenv()
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
@@ -21,58 +24,52 @@ def load_model_from_mlflow():
     
     client = mlflow.tracking.MlflowClient()
     
-    experiments = client.search_experiments(filter_string="name='FraudGuard_XGBoost_Improved'")
-    if not experiments:
-        experiments = client.search_experiments(filter_string="name='Default'")
-    
-    if not experiments:
-        raise ValueError("No experiment found in MLflow")
-    
-    experiment_id = experiments[0].experiment_id
-    runs = client.search_runs(
-        experiment_ids=[experiment_id],
-        filter_string="status='FINISHED'",
-        max_results=1,
-        order_by=["metrics.AUPRC DESC"]
-    )
-    
-    if not runs:
-        raise ValueError("No finished runs found in MLflow")
-    
-    best_run = runs[0]
-    
-    import tempfile
-    import joblib
-    import os
-    
-    artifact_path = f'runs:/{best_run.info.run_id}/fraud_model_xgboost'
-    with tempfile.TemporaryDirectory() as tmpdir:
-        downloaded = mlflow.artifacts.download_artifacts(
-            artifact_uri=artifact_path,
-            dst_path=tmpdir,
-            tracking_uri=MLFLOW_TRACKING_URI
-        )
-        # If it's a directory, find the pkl file
-        if os.path.isdir(downloaded):
-            for f in os.listdir(downloaded):
-                if f.endswith('.pkl'):
-                    downloaded = os.path.join(downloaded, f)
-                    break
-        model_data = joblib.load(downloaded)
-    
-    model = model_data["model"]
-    if hasattr(model, '__dict__') and 'use_label_encoder' in model.__dict__:
-        del model.__dict__['use_label_encoder']
-    
-    threshold = best_run.data.metrics.get("threshold", 0.5)
-    
-    print(f"Model loaded from MLflow run: {best_run.info.run_id}, threshold: {threshold}")
-    return {
-        "model": model,
-        "threshold": threshold,
-        "features": get_feature_columns(),
-        "reference_stats": None
-    }
+    try:
+        all_versions = client.search_model_versions("name='FraudDetectionModel'")
+        
+        if not all_versions:
+            raise ValueError("No model versions found in MLflow")
+        
+        latest_version = sorted(all_versions, key=lambda x: x.version, reverse=True)[0]
+        
+        run_id = latest_version.run_id
+        threshold = 0.5
+        
+        try:
+            run = client.get_run(run_id)
+            if "threshold" in run.data.params:
+                threshold = float(run.data.params["threshold"])
+        except Exception:
+            pass
+        
+        # Try loading from registered model first
+        try:
+            model = mlflow.sklearn.load_model(
+                model_uri=f"models:/FraudDetectionModel/{latest_version.version}"
+            )
+            print(f"Model loaded from MLflow: FraudDetectionModel v{latest_version.version}, threshold: {threshold}")
+            return {
+                "model": model,
+                "threshold": threshold,
+                "features": get_feature_columns(),
+                "reference_stats": None
+            }
+        except Exception as load_err:
+            # Fallback: load directly from run's artifact path
+            print(f"Registered model load failed: {load_err}, trying run artifact...")
+            model = mlflow.sklearn.load_model(
+                model_uri=f"runs:/{run_id}/model/model"
+            )
+            print(f"Model loaded from run: {run_id}, threshold: {threshold}")
+            return {
+                "model": model,
+                "threshold": threshold,
+                "features": get_feature_columns(),
+                "reference_stats": None
+            }
+        
+    except Exception as e:
+        raise ValueError(f"Failed to load from MLflow: {e}")
 
 
 def load_model_local():

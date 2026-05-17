@@ -30,12 +30,12 @@ env/
 *.swp
 *.swo
 
-# Data files
-data/raw/
-data/processed/
-data/test/
-*.csv
-*.parquet
+# # Data files
+# data/raw/
+# data/processed/
+# data/test/
+# *.csv
+# *.parquet
 
 # Models
 model/

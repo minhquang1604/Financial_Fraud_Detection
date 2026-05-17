@@ -1,4 +1,9 @@
 import os
+import sys
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import duckdb
 import numpy as np
 import pandas as pd
@@ -28,11 +33,11 @@ from src.train.utils import engineer_features, get_feature_columns
 # =========================
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
-RAW_DATA_PATH = os.path.join(DATA_DIR, "raw", "creditcard.csv")
+TRAIN_DATA_PATH = os.path.join(DATA_DIR, "train", "train_full.parquet")
 PROCESSED_DATA_PATH = os.path.join(DATA_DIR, "processed")
 MODEL_DIR = os.path.join(PROJECT_ROOT, "model")
 
-MLFLOW_TRACKING_URI = "http://localhost:5000"
+MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://13.250.11.23:5000")
 EXPERIMENT_NAME = "FraudGuard_XGBoost"
 MODEL_NAME = "FraudDetectionModel"
 
@@ -41,26 +46,16 @@ MODEL_NAME = "FraudDetectionModel"
 # 1. LOAD DATA
 # =========================
 def load_and_clean_data():
-    con = duckdb.connect(database=':memory:')
-
-    con.execute(f"""
-        CREATE TABLE raw AS 
-        SELECT * FROM read_csv_auto('{RAW_DATA_PATH}')
-    """)
-
-    df = con.execute("""
-        SELECT *
-        FROM raw
-        WHERE Amount IS NOT NULL AND Class IS NOT NULL
-    """).df()
-
-    con.close()
-
+    print(f"Loading training data from: {TRAIN_DATA_PATH}")
+    df = pd.read_parquet(TRAIN_DATA_PATH)
+    
     df = df.sort_values("Time").reset_index(drop=True)
-
+    
     os.makedirs(PROCESSED_DATA_PATH, exist_ok=True)
-    df.to_parquet(f'{PROCESSED_DATA_PATH}/cleaned.parquet', index=False)
-
+    df.to_parquet(f'{PROCESSED_DATA_PATH}/cleaned_train.parquet', index=False)
+    
+    print(f"Loaded {len(df)} records")
+    
     return df
 
 
@@ -151,30 +146,37 @@ def train():
         signature = infer_signature(X_train, model.predict(X_train))
 
         # =====================
-        # LOG MODEL + REGISTER (cách cũ)
+        # LOG MODEL + REGISTER
         # =====================
-        client = MlflowClient()
         import tempfile
+        
+        client = MlflowClient()
+
+        try:
+            client.create_registered_model(MODEL_NAME)
+        except Exception:
+            pass
 
         with tempfile.TemporaryDirectory() as tmpdir:
             model_path = os.path.join(tmpdir, "model")
-            joblib.dump(model, model_path)
-
-            mlflow.log_artifact(model_path, artifact_path="model")
-
-            try:
-                client.create_registered_model(MODEL_NAME)
-            except Exception:
-                pass
-
-            run_id = run.info.run_id
-            model_uri = f"runs://{run_id}/model/model"
-
-            client.create_model_version(
-                name=MODEL_NAME,
-                source=model_uri,
-                run_id=run_id
+            
+            # Use sklearn.save_model which doesn't trigger new API
+            mlflow.sklearn.save_model(
+                sk_model=model,
+                path=model_path,
+                signature=signature
             )
+            
+            mlflow.log_artifacts(tmpdir, artifact_path="model")
+
+        run_id = run.info.run_id
+        model_uri = f"runs:/{run_id}/model"
+
+        client.create_model_version(
+            name=MODEL_NAME,
+            source=model_uri,
+            run_id=run_id
+        )
 
         # =====================
         # ARTIFACTS
@@ -199,8 +201,6 @@ def train():
         mlflow.log_artifact("importance.png")
         plt.clf()
 
-        # Dataset
-        mlflow.log_artifact(f'{PROCESSED_DATA_PATH}/cleaned.parquet')
 
         # =====================
         # AUTO PROMOTE
