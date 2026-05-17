@@ -26,10 +26,10 @@ env:
   # Option 2: MLflow Tracking Server (set MLFLOW_TRACKING_URI in GitHub Secrets)
   MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
 
-  # Option 3: AWS S3 for MLflow artifacts (uncomment and set secrets)
-  # AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  # AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  # AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+  Option 3: AWS S3 for MLflow artifacts (uncomment and set secrets)
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
 
 jobs:
   setup:
@@ -139,6 +139,9 @@ jobs:
       - name: Run retrain pipeline (voi SMOTE)
         env:
           MLFLOW_TRACKING_URI: ${{ env.MLFLOW_TRACKING_URI }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
         run: |
           python -m src.pipeline.retrain_pipeline
 
