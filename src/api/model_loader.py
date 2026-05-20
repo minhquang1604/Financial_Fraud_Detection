@@ -53,28 +53,8 @@ def load_model_from_mlflow(stage: str = None, version: int = None):
     model_uri = f"models:/{MODEL_NAME}/{target_version.version}"
     print(f"Loading model from: {model_uri}")
     
-    model = None
-    last_error = None
-    
-    # Try various URIs
-    uris_to_try = [
-        model_uri,
-        f"runs:/{run_id}/model",
-        f"runs:/{run_id}/fraud_model_retrain"
-    ]
-    
-    for uri in uris_to_try:
-        try:
-            print(f"Trying: {uri}")
-            model = mlflow.sklearn.load_model(model_uri=uri)
-            print(f"SUCCESS: Model loaded from {uri}!")
-            break
-        except Exception as e:
-            print(f"Failed: {e}")
-            last_error = e
-    
-    if model is None:
-        raise ValueError(f"Could not load model from any URI. Last error: {last_error}")
+    model = mlflow.sklearn.load_model(model_uri=model_uri)
+    print(f"Model loaded successfully!")
     
     return {
         "model": model,
