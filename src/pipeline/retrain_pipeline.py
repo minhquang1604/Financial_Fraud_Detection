@@ -372,19 +372,19 @@ class RetrainPipeline:
             # =========================================
 
             model = XGBClassifier(
-                n_estimators=500,
+                n_estimators=200,
                 max_depth=6,
                 learning_rate=0.05,
                 scale_pos_weight=scale_pos_weight,
                 eval_metric="logloss",
-                random_state=42
+                random_state=42,
+                early_stopping_rounds=30
             )
 
             model.fit(
                 X_train,
                 y_train,
                 eval_set=[(X_val, y_val)],
-                early_stopping_rounds=30,
                 verbose=False
             )
 
