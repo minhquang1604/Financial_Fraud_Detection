@@ -515,19 +515,18 @@ class RetrainPipeline:
             # LOG MODEL
             # =========================================
 
-            logger.info(
-                "Logging model to MLflow..."
+            logger.info("Logging model to MLflow...")
+
+            model.save_model(
+                os.path.join(self.model_dir, "fraud_model.pkl")
+            )
+            
+            mlflow.log_artifact(
+                os.path.join(self.model_dir, "fraud_model.pkl"),
+                artifact_path="fraud_model"
             )
 
-            model_uri = mlflow.sklearn.log_model(
-                sk_model=model,
-                artifact_path="fraud_model",
-                signature=signature
-            )
-
-            logger.info(
-                f"Model logged to: {model_uri}"
-            )
+            logger.info("Model logged successfully")
 
             # =========================================
             # REGISTER MODEL
@@ -542,7 +541,7 @@ class RetrainPipeline:
 
             run_id = run.info.run_id
             
-            model_uri = f"runs:/{run_id}/fraud_model"
+            model_uri = f"runs:/{run_id}/fraud_model/fraud_model.pkl"
 
             mv = client.create_model_version(
                 name=MODEL_NAME,
