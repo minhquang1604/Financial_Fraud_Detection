@@ -4,17 +4,27 @@ services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     hostname: zookeeper
-    container_name: zookeeper
+    container_name: fraud-zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - fraud-network
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo stat | nc zookeeper 2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     hostname: kafka
-    container_name: kafka
+    container_name: fraud-kafka
     depends_on:
-      - zookeeper
+      zookeeper:
+        condition: service_healthy
     ports:
       - "9092:9092"
       - "29092:29092"
@@ -24,27 +34,117 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_LOG_MIN_ISR: 1
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - fraud-network
+
+  kafka-setup:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: fraud-kafka-setup
+    depends_on:
+      kafka:
+        condition: service_started
+    command: >
+      bash -c "
+        echo 'Waiting for Kafka to be ready...'
+        cub kafka-ready 1 40 || exit 1
+        echo 'Creating topics...'
+        kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --replication-factor 1 --partitions 1 --topic transaction_events
+        echo 'Topics created successfully'
+      "
+    networks:
+      - fraud-network
 
   mlflow:
-    image: python:3.9-slim
-    hostname: mlflow
-    container_name: mlflow
-    working_dir: /app
-    volumes:
-      - ./mlartifacts:/app/mlartifacts
+    image: ghcr.io/mlflow/mlflow:v2.14.0
+    container_name: fraud-mlflow
+    command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri sqlite:///mlflow.db
     ports:
       - "5000:5000"
-    command: >
-      bash -c "pip install mlflow &&
-               mlflow server
-               --backend-store-uri sqlite:///mlflow.db
-               --default-artifact-root ./mlartifacts
-               --host 0.0.0.0
-               --port 5000"
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      MLFLOW_ARTIFACT_ROOT: s3://${S3_BUCKET_NAME:-mlflow-artifacts}/mlflow/
+    volumes:
+      - mlflow-data:/mlflow
+    networks:
+      - fraud-network
+    profiles:
+      - mlflow-local
+
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: fraud-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    networks:
+      - fraud-network
+
+  grafana:
+    image: grafana/grafana:10.1.0
+    container_name: fraud-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./monitoring/grafana-dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana-datasources:/etc/grafana/provisioning/datasources
+      - grafana-data:/var/lib/grafana
+    networks:
+      - fraud-network
+    depends_on:
+      - prometheus
+
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: fraud-alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - alertmanager-data:/alertmanager
+    networks:
+      - fraud-network
+    restart: unless-stopped
+
+  webhook-receiver:
+    build:
+      context: .
+      dockerfile: Dockerfile.webhook
+    container_name: fraud-webhook-receiver
+    ports:
+      - "5001:5001"
+    environment:
+      - GITHUB_REPO=${GITHUB_REPO}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    networks:
+      - fraud-network
 
 networks:
-  default:
-    name: fraud-detection-network
+  fraud-network:
+    driver: bridge
+
+volumes:
+  mlflow-data:
+  prometheus-data:
+  grafana-data:
+  alertmanager-data:
