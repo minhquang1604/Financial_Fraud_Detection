@@ -80,14 +80,15 @@ jobs:
           os.makedirs('data/raw', exist_ok=True)
           
           # Download train data
+          print('=== TRAIN DATA ===')
           response = s3.list_objects_v2(Bucket=bucket, Prefix='data/train/')
           if 'Contents' in response and len(response['Contents']) > 0:
-              print('=== TRAIN DATA ===')
-              files = sorted([f['Key'] for f in response['Contents']])
-              for f in files[-1:]:
-                  local_file = f'data/train/{f.split(\"/\")[-1]}'
-                  s3.download_file(bucket, f, local_file)
-                  print(f'Downloaded train: {f}')
+              keys = [item['Key'] if isinstance(item, dict) else item for item in response['Contents']]
+              keys = sorted(keys)
+              latest_key = keys[-1]
+              local_file = 'data/train/' + latest_key.split('/')[-1]
+              s3.download_file(bucket, latest_key, local_file)
+              print('Downloaded train: ' + latest_key)
           else:
               print('ERROR: No train data in S3 - cannot proceed!')
               exit(1)
@@ -95,16 +96,15 @@ jobs:
           # Download ALL realtime data
           print('=== REALTIME DATA ===')
           response = s3.list_objects_v2(Bucket=bucket, Prefix='data/realtime/')
-          print(f'S3 response keys: {list(response.keys())}')
           if 'Contents' in response and len(response['Contents']) > 0:
-              files = sorted([f['Key'] for f in response['Contents']])
-              print(f'Found {len(files)} realtime files in S3')
-              for f in files:
-                  key = f['Key'] if isinstance(f, dict) else f
-                  local_file = f'data/realtime/{key.split("/")[-1]}'
+              keys = [item['Key'] if isinstance(item, dict) else item for item in response['Contents']]
+              keys = sorted(keys)
+              print('Found ' + str(len(keys)) + ' realtime files in S3')
+              for key in keys:
+                  local_file = 'data/realtime/' + key.split('/')[-1]
                   s3.download_file(bucket, key, local_file)
-                  print(f'Downloaded: {key}')
-              print(f'Total realtime files: {len(files)}')
+                  print('Downloaded: ' + key)
+              print('Total realtime files: ' + str(len(keys)))
           else:
               print('WARNING: No realtime data found in S3 - will skip labeling step')
 
@@ -112,11 +112,15 @@ jobs:
           print('=== RAW DATA ===')
           response = s3.list_objects_v2(Bucket=bucket, Prefix='data/raw/')
           if 'Contents' in response and len(response['Contents']) > 0:
-              files = [f['Key'] if isinstance(f, dict) else f for f in response['Contents'] if (f['Key'] if isinstance(f, dict) else f).endswith('.csv')]
-              for key in files:
-                  local_file = f'data/raw/{key.split("/")[-1]}'
+              csv_files = []
+              for item in response['Contents']:
+                  key = item['Key'] if isinstance(item, dict) else item
+                  if key.endswith('.csv'):
+                      csv_files.append(key)
+              for key in csv_files:
+                  local_file = 'data/raw/' + key.split('/')[-1]
                   s3.download_file(bucket, key, local_file)
-                  print(f'Downloaded: {key}')
+                  print('Downloaded: ' + key)
           else:
               print('ERROR: No raw reference data in S3 - needed for labeling!')
               exit(1)
