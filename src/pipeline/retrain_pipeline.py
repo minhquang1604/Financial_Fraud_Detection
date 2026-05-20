@@ -517,13 +517,16 @@ class RetrainPipeline:
 
             logger.info("Logging model to MLflow...")
 
-            mlflow.sklearn.log_model(
+            model_dir = os.path.join(self.model_dir, "model")
+            mlflow.sklearn.save_model(
                 sk_model=model,
-                artifact_path="model",
+                path=model_dir,
                 signature=signature
             )
 
-            logger.info("Model logged successfully")
+            mlflow.log_artifact(model_dir, artifact_path="")
+
+            logger.info("Model saved and logged successfully")
 
             # =========================================
             # REGISTER MODEL
