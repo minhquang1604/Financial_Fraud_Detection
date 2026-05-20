@@ -53,8 +53,17 @@ def load_model_from_mlflow(stage: str = None, version: int = None):
     model_uri = f"models:/{MODEL_NAME}/{target_version.version}"
     print(f"Loading model from: {model_uri}")
     
-    model = mlflow.sklearn.load_model(model_uri=model_uri)
-    print(f"Model loaded successfully!")
+    try:
+        model = mlflow.sklearn.load_model(model_uri=model_uri)
+        print(f"Model loaded successfully!")
+    except Exception as e:
+        print(f"Failed with models:/ URI: {e}")
+        
+        artifact_uri = run.info.artifact_uri.rstrip('/')
+        direct_uri = f"{artifact_uri}/model"
+        print(f"Trying direct artifact URI: {direct_uri}")
+        model = mlflow.sklearn.load_model(model_uri=direct_uri)
+        print(f"Model loaded from artifact URI!")
     
     return {
         "model": model,
