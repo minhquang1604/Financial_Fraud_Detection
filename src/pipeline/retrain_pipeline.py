@@ -519,7 +519,6 @@ class RetrainPipeline:
                 "Logging model to MLflow..."
             )
 
-            import mlflow.sklearn
             mlflow.sklearn.save_model(
                 sk_model=model,
                 path=os.path.join(self.model_dir, "fraud_model_retrain"),
@@ -534,8 +533,6 @@ class RetrainPipeline:
                 "Model logged successfully"
             )
 
-            # =========================================
-            # SAVE LOCAL BACKUP
             # =========================================
             # REGISTER MODEL
             # =========================================
