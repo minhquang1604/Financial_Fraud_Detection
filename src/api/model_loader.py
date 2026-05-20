@@ -54,6 +54,12 @@ def load_model_from_mlflow(stage: str = None, version: int = None):
     print(f"Loading model from: {model_uri}")
     
     model = mlflow.sklearn.load_model(model_uri=model_uri)
+    
+    if hasattr(model, 'use_label_encoder'):
+        delattr(model, 'use_label_encoder')
+    if hasattr(model, '_le'):
+        delattr(model, '_le')
+    
     print(f"Model loaded successfully!")
     
     return {
@@ -155,25 +161,28 @@ def predict_with_booster(model_data, X):
 def predict_proba_safe(model_data, X):
     import pandas as pd
     import numpy as np
+    import xgboost as xgb
     
     model = model_data["model"]
+    features = model_data.get("features", None)
     
-    try:
-        if isinstance(X, pd.DataFrame):
-            proba = model.predict_proba(X)[:, 1]
-        else:
-            proba = model.predict_proba(X)[:, 1]
-    except Exception as e:
-        print(f"predict_proba error: {e}")
-        proba = model.predict(X)
-        if len(proba.shape) > 1 and proba.shape[1] > 1:
-            proba = proba[:, 1]
-        else:
-            proba = proba
+    if features is None and hasattr(model, 'feature_names_in_'):
+        features = model.feature_names_in_.tolist()
     
-    proba = np.asarray(proba).flatten()
+    booster = model.get_booster()
     
-    proba = np.clip(proba, 0.0001, 0.9999)
+    if isinstance(X, pd.DataFrame):
+        X_arr = X.values
+    else:
+        X_arr = X
+    
+    if features is not None:
+        dtest = xgb.DMatrix(X_arr, feature_names=features)
+    else:
+        dtest = xgb.DMatrix(X_arr)
+    
+    raw_pred = booster.predict(dtest, output_margin=False)
+    proba = np.clip(np.asarray(raw_pred).flatten(), 0.0001, 0.9999)
     
     print(f"Raw proba: min={proba.min():.4f}, max={proba.max():.4f}, mean={proba.mean():.4f}")
     
