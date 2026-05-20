@@ -519,14 +519,13 @@ class RetrainPipeline:
                 "Logging model to MLflow..."
             )
 
-            mlflow.sklearn.save_model(
+            artifact_path = "fraud_model"
+            
+            mlflow.sklearn.log_model(
                 sk_model=model,
-                path=os.path.join(self.model_dir, "fraud_model_retrain"),
-                signature=signature
-            )
-
-            mlflow.log_artifact(
-                os.path.join(self.model_dir, "fraud_model_retrain", "model.pkl")
+                artifact_path=artifact_path,
+                signature=signature,
+                registered_model_name=MODEL_NAME
             )
 
             logger.info(
@@ -566,18 +565,23 @@ class RetrainPipeline:
             )
 
             # =========================================
-            # SET CHAMPION
+            # SET PRODUCTION STAGE
             # =========================================
 
-            client.set_registered_model_alias(
-                name=MODEL_NAME,
-                alias="champion",
-                version=mv.version
-            )
+            try:
+                client.transition_model_version_stage(
+                    name=MODEL_NAME,
+                    version=mv.version,
+                    stage="Production",
+                    archive_existing_versions=True
+                )
+                logger.info(f"Set version {mv.version} as Production (archived old)")
+            except Exception as e:
+                logger.warning(f"Could not set Production stage: {e}")
 
             logger.info(
-                f"Set version "
-                f"{mv.version} as @champion"
+                f"Registered model "
+                f"version={mv.version}"
             )
 
         # =============================================
