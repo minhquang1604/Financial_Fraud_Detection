@@ -1,6 +1,0 @@
-# Data files stored in S3 - no LFS needed
-# *.pkl filter=lfs diff=lfs merge=lfs -text
-# *.h5 filter=lfs diff=lfs merge=lfs -text
-# *.pth filter=lfs diff=lfs merge=lfs -text
-# *.joblib filter=lfs diff=lfs merge=lfs -text
-# *.parquet filter=lfs diff=lfs merge=lfs -text
