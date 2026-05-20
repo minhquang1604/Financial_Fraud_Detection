@@ -205,23 +205,12 @@ jobs:
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
           USE_S3: 'true'
         run: |
-          python -c "
-          import pandas as pd
-          import os
+          echo "=== DATA SUMMARY ==="
+          echo "Train files: $(ls -1 data/train/*.parquet 2>/dev/null | wc -l)"
+          echo "Labeled files: $(ls -1 data/labeled/*.parquet 2>/dev/null | wc -l)"
+          echo "Mixed files: $(ls -1 data/mixed/*.parquet 2>/dev/null | wc -l)"
           
-          # Check data before training
-          for dir in ['data/train', 'data/labeled', 'data/mixed']:
-              if os.path.exists(dir):
-                  files = [f for f in os.listdir(dir) if f.endswith('.parquet')]
-                  for f in files:
-                      df = pd.read_parquet(f'{dir}/{f}')
-                      class_counts = df['Class'].value_counts().to_dict() if 'Class' in df.columns else {}
-                      print(f'{dir}/{f}: {len(df)} rows')
-                      if class_counts:
-                          print(f'  Class 0: {class_counts.get(0, 0)}, Class 1: {class_counts.get(1, 0)}')
-          " 2>&1
-          
-          python -m src.pipeline.retrain_pipeline 2>&1
+          python -m src.pipeline.retrain_pipeline
 
       - name: Upload model to S3
         env:
