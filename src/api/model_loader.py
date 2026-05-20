@@ -53,17 +53,28 @@ def load_model_from_mlflow(stage: str = None, version: int = None):
     model_uri = f"models:/{MODEL_NAME}/{target_version.version}"
     print(f"Loading model from: {model_uri}")
     
-    try:
-        model = mlflow.sklearn.load_model(model_uri=model_uri)
-        print(f"Model loaded successfully!")
-    except Exception as e:
-        print(f"Failed with models:/ URI: {e}")
-        
-        artifact_uri = run.info.artifact_uri.rstrip('/')
-        direct_uri = f"{artifact_uri}/model"
-        print(f"Trying direct artifact URI: {direct_uri}")
-        model = mlflow.sklearn.load_model(model_uri=direct_uri)
-        print(f"Model loaded from artifact URI!")
+    model = None
+    last_error = None
+    
+    # Try various URIs
+    uris_to_try = [
+        model_uri,
+        f"runs:/{run_id}/model",
+        f"runs:/{run_id}/fraud_model_retrain"
+    ]
+    
+    for uri in uris_to_try:
+        try:
+            print(f"Trying: {uri}")
+            model = mlflow.sklearn.load_model(model_uri=uri)
+            print(f"SUCCESS: Model loaded from {uri}!")
+            break
+        except Exception as e:
+            print(f"Failed: {e}")
+            last_error = e
+    
+    if model is None:
+        raise ValueError(f"Could not load model from any URI. Last error: {last_error}")
     
     return {
         "model": model,
