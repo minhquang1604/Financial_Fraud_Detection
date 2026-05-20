@@ -12,66 +12,56 @@ import mlflow.sklearn
 from src.train.utils import get_feature_columns
 
 
-MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://13.215.163.1:5000")
+MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://13.229.113.113:5000")
 MODEL_NAME = "FraudDetectionModel"
 
 
 def load_model_from_mlflow(stage: str = None, version: int = None):
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    print(f"Connecting to MLflow: {MLFLOW_TRACKING_URI}")
     
     client = mlflow.tracking.MlflowClient()
     
-    try:
-        all_versions = client.search_model_versions(f"name='{MODEL_NAME}'")
-        
-        if not all_versions:
-            raise ValueError(f"No versions found for model: {MODEL_NAME}")
-        
-        if version:
-            target_version = next((v for v in all_versions if v.version == version), None)
-        elif stage:
-            target_version = next((v for v in all_versions if v.current_stage == stage), None)
-        else:
-            target_version = next((v for v in all_versions if v.current_stage == "Production"), None)
-            if not target_version:
-                target_version = sorted(all_versions, key=lambda x: x.version, reverse=True)[0]
-        
-        if not target_version:
-            raise ValueError(f"No version found for stage={stage}, version={version}")
-        
-        run_id = target_version.run_id
-        run = client.get_run(run_id)
-        
-        threshold = run.data.metrics.get("threshold") or run.data.params.get("threshold", 0.5)
-        threshold = float(threshold)
-        
-        model_uri = f"models:/{MODEL_NAME}/{target_version.version}"
-        
-        try:
-            model = mlflow.sklearn.load_model(model_uri=model_uri)
-            print(f"Model loaded from MLflow Registry: {MODEL_NAME}/{target_version.version}")
-            return {
-                "model": model,
-                "threshold": float(threshold),
-                "features": get_feature_columns(),
-                "reference_stats": None
-            }
-        except Exception as load_err:
-            if "MLmodel" in str(load_err) or "No such artifact" in str(load_err):
-                print(f"Registry artifact path incorrect, using direct artifact URI")
-                artifact_uri = run.info.artifact_uri.rstrip('/')
-                model = mlflow.sklearn.load_model(f"{artifact_uri}/model/model")
-                print(f"Model loaded from artifact: {MODEL_NAME}/{target_version.version}")
-                return {
-                    "model": model,
-                    "threshold": float(threshold),
-                    "features": get_feature_columns(),
-                    "reference_stats": None
-                }
-            raise
+    all_versions = client.search_model_versions(f"name='{MODEL_NAME}'")
+    print(f"Found {len(all_versions)} versions for {MODEL_NAME}")
     
-    except Exception as e:
-        raise ValueError(f"Failed to load from MLflow: {e}")
+    if not all_versions:
+        raise ValueError(f"No versions found for model: {MODEL_NAME}")
+    
+    if version:
+        target_version = next((v for v in all_versions if v.version == str(version)), None)
+    elif stage:
+        target_version = next((v for v in all_versions if v.current_stage == stage), None)
+    else:
+        target_version = next((v for v in all_versions if v.current_stage == "Production"), None)
+        if not target_version:
+            target_version = sorted(all_versions, key=lambda x: int(x.version), reverse=True)[0]
+    
+    if not target_version:
+        raise ValueError(f"No version found for stage={stage}, version={version}")
+    
+    print(f"Target model: version={target_version.version}, stage={target_version.current_stage}")
+    
+    run_id = target_version.run_id
+    run = client.get_run(run_id)
+    print(f"Run ID: {run_id}")
+    
+    threshold = run.data.metrics.get("threshold") or run.data.params.get("threshold", 0.5)
+    threshold = float(threshold)
+    print(f"Threshold: {threshold}")
+    
+    model_uri = f"models:/{MODEL_NAME}/{target_version.version}"
+    print(f"Loading model from: {model_uri}")
+    
+    model = mlflow.sklearn.load_model(model_uri=model_uri)
+    print(f"Model loaded successfully!")
+    
+    return {
+        "model": model,
+        "threshold": float(threshold),
+        "features": get_feature_columns(),
+        "reference_stats": None
+    }
 
 
 def get_model():

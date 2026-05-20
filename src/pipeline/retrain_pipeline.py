@@ -520,8 +520,7 @@ class RetrainPipeline:
             local_model_path = os.path.join(self.model_dir, "fraud_model_saved")
             mlflow.sklearn.save_model(
                 sk_model=model,
-                path=local_model_path,
-                serialization_format=mlflow.sklearn.SERIALIZATION_FORMAT_PICKLE
+                path=local_model_path
             )
             
             mlflow.log_artifact(local_model_path, artifact_path="model")
@@ -536,8 +535,9 @@ class RetrainPipeline:
 
             try:
                 client.create_registered_model(MODEL_NAME)
-            except Exception:
-                pass
+                logger.info(f"Created registered model: {MODEL_NAME}")
+            except Exception as e:
+                logger.info(f"Registered model may already exist: {e}")
 
             run_id = run.info.run_id
             
@@ -549,11 +549,7 @@ class RetrainPipeline:
                 run_id=run_id
             )
 
-            logger.info(f"Registered model version={mv.version}")
-
-            # =========================================
-            # SET PRODUCTION STAGE
-            # =========================================
+            logger.info(f"Created model version: {mv.version}")
 
             try:
                 client.transition_model_version_stage(
@@ -562,7 +558,7 @@ class RetrainPipeline:
                     stage="Production",
                     archive_existing_versions=True
                 )
-                logger.info(f"Set version {mv.version} as Production (archived old)")
+                logger.info(f"Set version {mv.version} as Production")
             except Exception as e:
                 logger.warning(f"Could not set Production stage: {e}")
 
