@@ -56,14 +56,23 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
         run: |
           python -c "
-          import boto3
           import os
-          import pandas as pd
+          import boto3
           
-          bucket = '${{ secrets.S3_BUCKET_NAME }}'
-          s3 = boto3.client('s3', region_name=os.environ['AWS_DEFAULT_REGION'])
+          bucket = os.environ.get('S3_BUCKET_NAME', '')
+          if not bucket:
+              raise ValueError('S3_BUCKET_NAME is not set! Please configure GitHub Secret S3_BUCKET_NAME')
+          
+          print(f'Using bucket: {bucket}')
+          
+          s3 = boto3.client('s3',
+              region_name=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'),
+              aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+              aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY')
+          )
           
           os.makedirs('data/train', exist_ok=True)
           os.makedirs('data/labeled', exist_ok=True)
@@ -78,8 +87,7 @@ jobs:
               for f in files[-1:]:
                   local_file = f'data/train/{f.split(\"/\")[-1]}'
                   s3.download_file(bucket, f, local_file)
-                  df = pd.read_parquet(local_file)
-                  print(f'Downloaded train: {f} - {len(df)} rows, fraud: {df[\"Class\"].sum() if \"Class\" in df.columns else \"N/A\"}')
+                  print(f'Downloaded train: {f}')
           else:
               print('ERROR: No train data in S3 - cannot proceed!')
               exit(1)
@@ -94,12 +102,11 @@ jobs:
                   key = f['Key']
                   local_file = f'data/realtime/{key.split(\"/\")[-1]}'
                   s3.download_file(bucket, key, local_file)
-                  df = pd.read_parquet(local_file)
-                  print(f'Downloaded: {key} - {len(df)} rows')
+                  print(f'Downloaded: {key}')
               print(f'Total realtime files: {len(files)}')
           else:
               print('WARNING: No realtime data found in S3 - will skip labeling step')
-          
+
           # Download raw reference (creditcard.csv)
           print('=== RAW DATA ===')
           response = s3.list_objects_v2(Bucket=bucket, Prefix='data/raw/')
@@ -114,6 +121,18 @@ jobs:
               print('ERROR: No raw reference data in S3 - needed for labeling!')
               exit(1)
           "
+
+      - name: Check downloaded data
+        run: |
+          echo "=== TRAIN DATA ==="
+          ls -la data/train/ 2>/dev/null || echo "No train data"
+          
+          echo "=== REALTIME DATA ==="
+          ls -la data/realtime/ 2>/dev/null | head -10 || echo "No realtime data"
+          echo "Realtime file count: $(ls -1 data/realtime/*.parquet 2>/dev/null | wc -l)"
+          
+          echo "=== RAW DATA ==="
+          ls -la data/raw/ 2>/dev/null || echo "No raw data"
 
       - name: Run Label Joiner
         run: |
@@ -134,6 +153,11 @@ jobs:
           LABELED_COUNT=$(ls -1 data/labeled/*.parquet 2>/dev/null | wc -l)
           echo "Labeled files available: $LABELED_COUNT"
           
+          echo "=== Current data ==="
+          echo "Train files: $(ls -1 data/train/*.parquet 2>/dev/null | wc -l)"
+          echo "Labeled files: $LABELED_COUNT"
+          echo "Mixed files: $(ls -1 data/mixed/*.parquet 2>/dev/null | wc -l)"
+          
           python -m src.pipeline.prepare_data --ref-ratio ${{ github.event.inputs.ref_ratio || 0.75 }}
 
       - name: Upload mixed data to S3
@@ -141,14 +165,23 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
         run: |
           python -c "
-          import boto3
           import os
+          import boto3
           from datetime import datetime
           
-          bucket = '${{ secrets.S3_BUCKET_NAME }}'
-          s3 = boto3.client('s3', region_name=os.environ['AWS_DEFAULT_REGION'])
+          bucket = os.environ.get('S3_BUCKET_NAME', '')
+          if not bucket:
+              print('WARNING: S3_BUCKET_NAME not set, skipping upload')
+              exit(0)
+          
+          s3 = boto3.client('s3',
+              region_name=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'),
+              aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+              aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY')
+          )
           
           version = datetime.now().strftime('%Y%m%d_%H%M%S')
           
@@ -191,14 +224,23 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
         run: |
           python -c "
-          import boto3
           import os
+          import boto3
           from datetime import datetime
           
-          bucket = '${{ secrets.S3_BUCKET_NAME }}'
-          s3 = boto3.client('s3', region_name=os.environ['AWS_DEFAULT_REGION'])
+          bucket = os.environ.get('S3_BUCKET_NAME', '')
+          if not bucket:
+              print('WARNING: S3_BUCKET_NAME not set, skipping upload')
+              exit(0)
+          
+          s3 = boto3.client('s3',
+              region_name=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'),
+              aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+              aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY')
+          )
           
           version = datetime.now().strftime('%Y%m%d_%H%M%S')
           
