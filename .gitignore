@@ -30,14 +30,18 @@ env/
 *.swp
 *.swo
 
-# # Data files
-# data/raw/
-# data/processed/
-# data/test/
-# *.csv
-# *.parquet
+# # Data files - stored in S3, not in git
+data/raw/
+data/processed/
+data/test/
+data/realtime/
+data/staging/
+data/labeled/
+data/mixed/
+*.csv
+*.parquet
 
-# Models
+# Models - trained models stored in S3
 model/
 models/
 *.pkl
@@ -59,10 +63,5 @@ mlflow.db
 # AWS CLI (local)
 aws/
 
-# Data - ignore temp/runtime folders (not needed for retraining)
-# Note: .parquet files in train/labeled/mixed are tracked via Git LFS
+# Data versioning (DVC - disabled, using S3 instead)
 data/dvc/
-data/realtime/
-data/staging/
-data/processed/
-data/raw/

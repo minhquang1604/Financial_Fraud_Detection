@@ -20,19 +20,15 @@ on:
           - drift_alert
 
 env:
-  # Option 1: Self-hosted MLflow (use self-hosted runner on same network as MLflow)
-  # MLFLOW_TRACKING_URI: http://your-mlflow-server:5000
-
-  # Option 2: MLflow Tracking Server (set MLFLOW_TRACKING_URI in GitHub Secrets)
   MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
-
-  Option 3: AWS S3 for MLflow artifacts (uncomment and set secrets)
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+  S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+  USE_S3: 'true'
 
 jobs:
-  setup:
+  retrain:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -55,131 +51,167 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-  prepare-data:
-    needs: setup
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          lfs: true
-
-      - name: Fetch LFS files
-        run: git lfs pull
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-
-      - name: Run label joiner (gan nhan tu dataset goc)
-        run: |
-          python -m src.pipeline.label_joiner || echo "Label joiner skipped"
-
-      - name: Prepare mixed data (75% Ref + 25% Labeled)
+      - name: Download all data from S3
         env:
-          REF_RATIO: ${{ github.inputs.ref_ratio || 0.75 }}
-        run: |
-          # Check if labeled data exists
-          if [ -d "data/labeled" ] && [ $(ls -1 data/labeled/*.parquet 2>/dev/null | wc -l) -gt 0 ]; then
-            python -m src.pipeline.prepare_data --ref-ratio $REF_RATIO
-          elif [ -d "data/realtime" ] && [ $(ls -1 data/realtime/*.parquet 2>/dev/null | wc -l) -gt 0 ]; then
-            python -m src.pipeline.label_joiner
-            python -m src.pipeline.prepare_data --ref-ratio $REF_RATIO
-          else
-            echo "No labeled or realtime data found. Using reference data only."
-            python -m src.pipeline.prepare_data --ref-ratio 1.0
-          fi
-
-      - name: Check data
-        id: check-data
-        run: |
-          ls -la data/mixed/
-          echo "mixed_files=$(ls -1 data/mixed/*.parquet 2>/dev/null | wc -l)" >> $GITHUB_OUTPUT
-
-      - name: Upload mixed data
-        if: steps.check-data.outputs.mixed_files > 0
-        uses: actions/upload-artifact@v4
-        with:
-          name: mixed-data
-          path: data/mixed/
-          retention-days: 7
-
-  retrain:
-    needs: [setup, prepare-data]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          lfs: true
-
-      - name: Fetch LFS files
-        run: git lfs pull
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-
-      - name: Download mixed data
-        uses: actions/download-artifact@v4
-        with:
-          name: mixed-data
-          path: data/mixed/
-
-      - name: Run retrain pipeline (voi SMOTE)
-        env:
-          MLFLOW_TRACKING_URI: ${{ env.MLFLOW_TRACKING_URI }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
         run: |
-          python -m src.pipeline.retrain_pipeline
-
-      - name: Evaluate model
-        run: |
           python -c "
-          import joblib
-          model = joblib.load('model/fraud_model_retrain.pkl')
-          print(f'Model metrics: {model.get(\"metrics\", {})}')
-          print(f'SMOTE applied: {model.get(\"smote_applied\", False)}')
+          import boto3
+          import os
+          import pandas as pd
+          
+          bucket = '${{ secrets.S3_BUCKET_NAME }}'
+          s3 = boto3.client('s3', region_name=os.environ['AWS_DEFAULT_REGION'])
+          
+          os.makedirs('data/train', exist_ok=True)
+          os.makedirs('data/labeled', exist_ok=True)
+          os.makedirs('data/realtime', exist_ok=True)
+          os.makedirs('data/raw', exist_ok=True)
+          
+          # Download train data
+          response = s3.list_objects_v2(Bucket=bucket, Prefix='data/train/')
+          if 'Contents' in response and len(response['Contents']) > 0:
+              print('=== TRAIN DATA ===')
+              files = sorted([f['Key'] for f in response['Contents']])
+              for f in files[-1:]:
+                  local_file = f'data/train/{f.split(\"/\")[-1]}'
+                  s3.download_file(bucket, f, local_file)
+                  df = pd.read_parquet(local_file)
+                  print(f'Downloaded train: {f} - {len(df)} rows, fraud: {df[\"Class\"].sum() if \"Class\" in df.columns else \"N/A\"}')
+          else:
+              print('ERROR: No train data in S3 - cannot proceed!')
+              exit(1)
+          
+          # Download ALL realtime data
+          print('=== REALTIME DATA ===')
+          response = s3.list_objects_v2(Bucket=bucket, Prefix='data/realtime/')
+          if 'Contents' in response and len(response['Contents']) > 0:
+              files = sorted([f['Key'] for f in response['Contents']])
+              print(f'Found {len(files)} realtime files in S3')
+              for f in files:
+                  key = f['Key']
+                  local_file = f'data/realtime/{key.split(\"/\")[-1]}'
+                  s3.download_file(bucket, key, local_file)
+                  df = pd.read_parquet(local_file)
+                  print(f'Downloaded: {key} - {len(df)} rows')
+              print(f'Total realtime files: {len(files)}')
+          else:
+              print('WARNING: No realtime data found in S3 - will skip labeling step')
+          
+          # Download raw reference (creditcard.csv)
+          print('=== RAW DATA ===')
+          response = s3.list_objects_v2(Bucket=bucket, Prefix='data/raw/')
+          if 'Contents' in response and len(response['Contents']) > 0:
+              files = [f['Key'] for f in response['Contents'] if f['Key'].endswith('.csv')]
+              for f in files:
+                  key = f['Key']
+                  local_file = f'data/raw/{key.split(\"/\")[-1]}'
+                  s3.download_file(bucket, key, local_file)
+                  print(f'Downloaded: {key}')
+          else:
+              print('ERROR: No raw reference data in S3 - needed for labeling!')
+              exit(1)
           "
 
-      - name: Upload model
-        uses: actions/upload-artifact@v4
-        with:
-          name: fraud-model
-          path: model/
-          retention-days: 30
-
-  deploy:
-    needs: retrain
-    runs-on: ubuntu-latest
-    if: success()
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download model
-        uses: actions/download-artifact@v4
-        with:
-          name: fraud-model
-          path: model/
-
-      - name: Deploy to staging
+      - name: Run Label Joiner
         run: |
-          echo "Deploying model..."
-          ls -la model/fraud_model_retrain.pkl
+          REALTIME_COUNT=$(ls -1 data/realtime/*.parquet 2>/dev/null | wc -l)
+          echo "Realtime files available: $REALTIME_COUNT"
+          
+          if [ "$REALTIME_COUNT" -gt 0 ]; then
+            echo "Running label joiner..."
+            python -m src.pipeline.label_joiner
+          else
+            echo "No realtime files - skipping label joiner"
+          fi
 
-      - name: Record deployment
+      - name: Check labeled data and prepare mixed data
+        env:
+          REF_RATIO: ${{ github.event.inputs.ref_ratio || 0.75 }}
         run: |
-          echo "Model deployed at $(date)"
+          LABELED_COUNT=$(ls -1 data/labeled/*.parquet 2>/dev/null | wc -l)
+          echo "Labeled files available: $LABELED_COUNT"
+          
+          python -m src.pipeline.prepare_data --ref-ratio ${{ github.event.inputs.ref_ratio || 0.75 }}
+
+      - name: Upload mixed data to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          python -c "
+          import boto3
+          import os
+          from datetime import datetime
+          
+          bucket = '${{ secrets.S3_BUCKET_NAME }}'
+          s3 = boto3.client('s3', region_name=os.environ['AWS_DEFAULT_REGION'])
+          
+          version = datetime.now().strftime('%Y%m%d_%H%M%S')
+          
+          for f in os.listdir('data/mixed'):
+              if f.endswith('.parquet'):
+                  local_path = f'data/mixed/{f}'
+                  s3_key = f'data/mixed/mixed_train_{version}.parquet'
+                  s3.upload_file(local_path, bucket, s3_key)
+                  print(f'Uploaded: {s3_key}')
+          "
+
+      - name: Run retrain pipeline
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          USE_S3: 'true'
+        run: |
+          python -c "
+          import pandas as pd
+          import os
+          
+          # Check data before training
+          for dir in ['data/train', 'data/labeled', 'data/mixed']:
+              if os.path.exists(dir):
+                  files = [f for f in os.listdir(dir) if f.endswith('.parquet')]
+                  for f in files:
+                      df = pd.read_parquet(f'{dir}/{f}')
+                      class_counts = df['Class'].value_counts().to_dict() if 'Class' in df.columns else {}
+                      print(f'{dir}/{f}: {len(df)} rows')
+                      if class_counts:
+                          print(f'  Class 0: {class_counts.get(0, 0)}, Class 1: {class_counts.get(1, 0)}')
+          " 2>&1
+          
+          python -m src.pipeline.retrain_pipeline 2>&1
+
+      - name: Upload model to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          python -c "
+          import boto3
+          import os
+          from datetime import datetime
+          
+          bucket = '${{ secrets.S3_BUCKET_NAME }}'
+          s3 = boto3.client('s3', region_name=os.environ['AWS_DEFAULT_REGION'])
+          
+          version = datetime.now().strftime('%Y%m%d_%H%M%S')
+          
+          for f in os.listdir('model'):
+              if f.endswith('.pkl'):
+                  local_path = f'model/{f}'
+                  s3_key = f'model/fraud_model_{version}.pkl'
+                  s3.upload_file(local_path, bucket, s3_key)
+                  print(f'Uploaded model: {s3_key}')
+          "
+
+      - name: Log results
+        run: |
+          echo "Retrain completed successfully"
+          echo "Model artifacts uploaded to S3 bucket: ${{ secrets.S3_BUCKET_NAME }}"
+          echo "Check MLflow at: ${{ secrets.MLFLOW_TRACKING_URI }}"

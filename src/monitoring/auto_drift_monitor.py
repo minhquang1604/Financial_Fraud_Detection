@@ -25,6 +25,12 @@ from data_version import DataVersionManager
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "pipeline"))
 from retrain_pipeline import RetrainPipeline
 
+sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "mlops"))
+from s3_manager import S3DataManager
+
+from dotenv import load_dotenv
+load_dotenv()
+
 
 class AutoRetrainTrigger:
     DRIFT_THRESHOLD = 0.05
@@ -51,6 +57,7 @@ class AutoRetrainTrigger:
         self.running = False
         self.drift_monitor = None
         self.data_manager = DataVersionManager()
+        self.s3_manager = S3DataManager() if os.environ.get("USE_S3", "true").lower() == "true" else None
         self.webhook_url = os.environ.get("DRIFT_WEBHOOK_URL")
         self.last_retrain_time = None
     
@@ -65,26 +72,81 @@ class AutoRetrainTrigger:
         return df
     
     def _load_model(self):
-        import joblib
-        return joblib.load(self.model_path)
+        if self.model_path.startswith("mlflow:"):
+            stage_or_version = self.model_path.split(":", 1)[1]
+            
+            if stage_or_version.isdigit():
+                stage = None
+                version = int(stage_or_version)
+            else:
+                stage = stage_or_version
+                version = None
+            
+            logger.info(f"Loading model from MLflow: stage={stage}, version={version}")
+            
+            sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "api"))
+            from model_loader import load_model_from_mlflow, get_model_info
+            
+            model_data = load_model_from_mlflow(stage=stage, version=version)
+            
+            model_info = get_model_info(stage=stage, version=version)
+            model_data["threshold"] = model_info["threshold"]
+            model_data["metrics"] = model_info["metrics"]
+            model_data["mlflow_version"] = model_info["version"]
+            
+            logger.info(f"MLflow model loaded: version={model_info['version']}, "
+                       f"threshold={model_info['threshold']:.4f}, F1={model_info['metrics'].get('F1', 0):.4f}")
+            
+            self.model_data = model_data
+            return model_data
+        else:
+            import joblib
+            return joblib.load(self.model_path)
     
     def _load_staging_data(self) -> pd.DataFrame:
-        if not os.path.exists(self.STAGING_DIR):
+        USE_S3 = os.environ.get("USE_S3", "true").lower() == "true"
+
+        if USE_S3 and self.s3_manager:
+            try:
+                files = self.s3_manager.list_files("realtime")
+                if not files:
+                    return pd.DataFrame()
+                
+                dfs = []
+                for s3_path in files[-3:]:
+                    try:
+                        df = self.s3_manager.download_dataframe(s3_path, "parquet")
+                        dfs.append(df)
+                    except Exception as e:
+                        logger.warning(f"Failed to download {s3_path}: {e}")
+                
+                if not dfs:
+                    return pd.DataFrame()
+                
+                combined = pd.concat(dfs, ignore_index=True)
+            except Exception as e:
+                logger.warning(f"S3 staging load failed: {e}")
+                combined = pd.DataFrame()
+        else:
+            if not os.path.exists(self.STAGING_DIR):
+                return pd.DataFrame()
+            
+            files = [f for f in os.listdir(self.STAGING_DIR) if f.endswith('.parquet')]
+            if not files:
+                return pd.DataFrame()
+            
+            dfs = []
+            for f in files:
+                df = pd.read_parquet(os.path.join(self.STAGING_DIR, f))
+                dfs.append(df)
+            
+            if not dfs:
+                return pd.DataFrame()
+            
+            combined = pd.concat(dfs, ignore_index=True)
+        
+        if combined.empty:
             return pd.DataFrame()
-        
-        files = [f for f in os.listdir(self.STAGING_DIR) if f.endswith('.parquet')]
-        if not files:
-            return pd.DataFrame()
-        
-        dfs = []
-        for f in files:
-            df = pd.read_parquet(os.path.join(self.STAGING_DIR, f))
-            dfs.append(df)
-        
-        if not dfs:
-            return pd.DataFrame()
-        
-        combined = pd.concat(dfs, ignore_index=True)
         
         sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "train"))
         from utils import engineer_features
@@ -94,15 +156,29 @@ class AutoRetrainTrigger:
         return combined
     
     def _load_labeled_data(self) -> pd.DataFrame:
-        if not os.path.exists(self.LABELED_DIR):
-            return pd.DataFrame()
-        
-        files = sorted([f for f in os.listdir(self.LABELED_DIR) if f.endswith('.parquet')])
-        if not files:
-            return pd.DataFrame()
-        
-        latest = os.path.join(self.LABELED_DIR, files[-1])
-        df = pd.read_parquet(latest)
+        USE_S3 = os.environ.get("USE_S3", "true").lower() == "true"
+
+        if USE_S3 and self.s3_manager:
+            try:
+                files = self.s3_manager.list_files("labeled")
+                if not files:
+                    return pd.DataFrame()
+                
+                latest = files[-1]
+                df = self.s3_manager.download_dataframe(latest, "parquet")
+            except Exception as e:
+                logger.warning(f"S3 labeled load failed: {e}")
+                return pd.DataFrame()
+        else:
+            if not os.path.exists(self.LABELED_DIR):
+                return pd.DataFrame()
+            
+            files = sorted([f for f in os.listdir(self.LABELED_DIR) if f.endswith('.parquet')])
+            if not files:
+                return pd.DataFrame()
+            
+            latest = os.path.join(self.LABELED_DIR, files[-1])
+            df = pd.read_parquet(latest)
         
         sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "train"))
         from utils import engineer_features
@@ -141,12 +217,37 @@ class AutoRetrainTrigger:
         self, 
         new_metrics: Dict[str, float]
     ) -> bool:
-        if not os.path.exists(self.model_path):
+        old_f1 = 0
+        current_version = None
+        
+        if self.model_path.startswith("mlflow:"):
+            stage_or_version = self.model_path.split(":", 1)[1]
+            
+            if stage_or_version.isdigit():
+                stage = None
+                version = int(stage_or_version)
+            else:
+                stage = stage_or_version
+                version = None
+            
+            sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "api"))
+            from model_loader import get_model_info
+            
+            try:
+                model_info = get_model_info(stage=stage, version=version)
+                old_f1 = model_info.get("metrics", {}).get("F1", 0)
+                current_version = model_info.get("version")
+                logger.info(f"Current MLflow model version: {current_version}, F1={old_f1:.4f}")
+            except Exception as e:
+                logger.warning(f"Could not get current model info from MLflow: {e}")
+        elif os.path.exists(self.model_path):
+            import joblib
+            old_model_data = joblib.load(self.model_path)
+            old_f1 = old_model_data.get("metrics", {}).get("F1", 0)
+        else:
+            logger.warning(f"Model path not found: {self.model_path}")
             return False
         
-        import joblib
-        old_model_data = joblib.load(self.model_path)
-        old_f1 = old_model_data.get("metrics", {}).get("F1", 0)
         new_f1 = new_metrics.get("F1", 0)
         
         logger.info(f"Model comparison: old F1={old_f1:.4f}, new F1={new_f1:.4f}")
@@ -155,11 +256,8 @@ class AutoRetrainTrigger:
         should_deploy = improvement > 0 or new_f1 > old_f1
         
         if should_deploy:
-            new_model_path = self.model_path.replace(".pkl", "_new.pkl")
-            if os.path.exists(new_model_path):
-                import shutil
-                shutil.copy(new_model_path, self.model_path)
-                logger.info(f"New model deployed (improvement: {improvement:.4f})")
+            logger.info(f"New model has better F1 (improvement: {improvement:.4f}). "
+                       f"Will be deployed via GitHub Actions workflow.")
         else:
             logger.info(f"New model NOT deployed (no improvement)")
         
@@ -213,6 +311,12 @@ class AutoRetrainTrigger:
             should_trigger = True
         
         if should_trigger:
+            logger.info("Committing and pushing data to Git...")
+            if self._commit_and_push_data():
+                logger.info("Data pushed to Git, triggering retrain workflow...")
+            else:
+                logger.warning("Failed to push data, still triggering webhook...")
+            
             self._send_webhook_alert(report)
         
         if should_trigger and self.auto_retrain:
@@ -235,6 +339,52 @@ class AutoRetrainTrigger:
         
         return False
     
+    def _commit_and_push_data(self) -> bool:
+        import subprocess
+        import os
+        
+        data_dirs = ["data/staging", "data/labeled", "data/realtime"]
+        
+        try:
+            os.chdir(PROJECT_ROOT)
+            
+            for data_dir in data_dirs:
+                if os.path.exists(data_dir):
+                    for root, dirs, files in os.walk(data_dir):
+                        for file in files:
+                            if file.endswith('.parquet'):
+                                file_path = os.path.join(root, file)
+                                result = subprocess.run(
+                                    ["git", "add", file_path],
+                                    capture_output=True
+                                )
+            
+            result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+            if not result.stdout.strip():
+                logger.info("No new data files to commit")
+                return False
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            commit_msg = f"Auto retrain: adding new data for drift retrain {timestamp}"
+            
+            subprocess.run(["git", "config", "user.email", "auto@drift.ml"], check=True)
+            subprocess.run(["git", "config", "user.name", "Auto Drift Monitor"], check=True)
+            
+            subprocess.run(["git", "commit", "-m", commit_msg], check=True)
+            
+            logger.info("Pushing data to Git...")
+            subprocess.run(["git", "push"], check=True, capture_output=True)
+            
+            logger.info("Data pushed to Git successfully")
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Git operation failed: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to commit/push data: {e}")
+            return False
+    
     def _send_webhook_alert(self, report: Dict[str, Any]) -> bool:
         if not self.webhook_url:
             logger.warning("DRIFT_WEBHOOK_URL not set, skipping webhook")
@@ -244,22 +394,35 @@ class AutoRetrainTrigger:
             import requests
             
             token = os.environ.get("PAT_TOKEN", "")
-            headers = {"Content-Type": "application/json"}
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28"
+            }
             if token:
                 headers["Authorization"] = f"Bearer {token}"
             
             payload = {
-                "event_type": "drift_alert"
+                "event_type": "drift_alert",
+                "client_payload": {
+                    "trigger_type": "drift_alert",
+                    "psi": report.get("data_drift", {}).get("max_psi", 0),
+                    "timestamp": datetime.now().isoformat()
+                }
             }
+            
+            logger.info(f"Sending webhook to: {self.webhook_url}")
             
             response = requests.post(
                 self.webhook_url,
                 json=payload,
                 headers=headers,
-                timeout=10
+                timeout=30
             )
             
-            if response.status_code in [200, 201, 202]:
+            logger.info(f"Webhook response: {response.status_code} - {response.text[:200]}")
+            
+            if response.status_code in [200, 201, 202, 204]:
                 logger.info(f"Webhook sent successfully: {response.status_code}")
                 return True
             else:
@@ -331,9 +494,14 @@ if __name__ == "__main__":
     import argparse
     import joblib
     
+    PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    DEFAULT_REFERENCE = os.path.join(PROJECT_ROOT, "data", "train", "train_full.parquet")
+    
     parser = argparse.ArgumentParser(description="Auto Drift Monitor with Retrain")
-    parser.add_argument("--reference", type=str, required=True, help="Reference data path")
-    parser.add_argument("--model", type=str, required=True, help="Model path")
+    parser.add_argument("--reference", type=str, default=DEFAULT_REFERENCE, 
+                        help=f"Reference data path (default: {DEFAULT_REFERENCE})")
+    parser.add_argument("--model", type=str, required=True, 
+                        help="Model path or 'mlflow:Production' / 'mlflow:latest' / 'mlflow:<version>'")
     parser.add_argument("--interval", type=int, default=300, help="Check interval in seconds")
     parser.add_argument("--no-auto-retrain", action="store_true", help="Disable auto retrain")
     parser.add_argument("--webhook-url", type=str, default=None, help="Webhook URL for GitHub Actions")
@@ -345,8 +513,28 @@ if __name__ == "__main__":
     if args.pat_token:
         os.environ["PAT_TOKEN"] = args.pat_token
     
-    model_data = joblib.load(args.model)
-    features = model_data.get("features", [])
+    if args.model.startswith("mlflow:"):
+        stage_or_version = args.model.split(":", 1)[1]
+        
+        if stage_or_version.isdigit():
+            stage = None
+            version = int(stage_or_version)
+        else:
+            stage = stage_or_version
+            version = None
+        
+        sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "api"))
+        from model_loader import load_model_from_mlflow, get_model_info
+        
+        model_data = load_model_from_mlflow(stage=stage, version=version)
+        model_info = get_model_info(stage=stage, version=version)
+        features = model_data.get("features", [])
+        
+        print(f"Loaded MLflow model: version={model_info['version']}, "
+              f"threshold={model_info['threshold']:.4f}, F1={model_info['metrics'].get('F1', 0):.4f}")
+    else:
+        model_data = joblib.load(args.model)
+        features = model_data.get("features", [])
     
     run_auto_drift_monitor(
         reference_data_path=args.reference,

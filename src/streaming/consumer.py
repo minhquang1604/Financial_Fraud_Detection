@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import time
 import pandas as pd
@@ -6,14 +7,19 @@ from datetime import datetime
 from kafka import KafkaConsumer
 from kafka.errors import KafkaError
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "mlops"))
+from s3_manager import S3DataManager
+
 
 BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 TOPIC_NAME = "transaction_events"
 API_URL = os.environ.get("API_URL", "http://localhost:8000")
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-STAGING_DIR = os.path.join(PROJECT_ROOT, "data", "realtime")
 BATCH_SIZE = 1000
+
+S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "fraud-detection-data")
+USE_S3 = os.environ.get("USE_S3", "true").lower() == "true"
 
 FEATURE_COLS = [
     "V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10",
@@ -47,23 +53,35 @@ def call_prediction_api(features: dict) -> dict:
         return {"error": str(e)}
 
 
+s3_manager = S3DataManager() if USE_S3 else None
+
+
 def save_to_parquet(records: list, batch_id: int):
-    os.makedirs(STAGING_DIR, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"staging_consumer_{timestamp}_batch{batch_id}.parquet"
-    filepath = os.path.join(STAGING_DIR, filename)
-    
+    filename = f"realtime_{timestamp}_batch{batch_id}.parquet"
+
     df = pd.DataFrame(records)
-    df.to_parquet(filepath, index=False)
-    print(f"[SAVED] {len(records)} records -> {filepath}")
-    return filepath
+
+    if USE_S3 and s3_manager:
+        s3_path = s3_manager.upload_dataframe(df, "realtime", filename, "parquet")
+        print(f"[S3 SAVED] {len(records)} records -> s3://{S3_BUCKET_NAME}/{s3_path}")
+        return s3_path
+    else:
+        os.makedirs(PROJECT_ROOT + "/data/realtime", exist_ok=True)
+        filepath = os.path.join(PROJECT_ROOT, "data", "realtime", filename)
+        df.to_parquet(filepath, index=False)
+        print(f"[LOCAL SAVED] {len(records)} records -> {filepath}")
+        return filepath
 
 
 def run_consumer():
     consumer = create_consumer()
     print(f"Consumer connected to {BOOTSTRAP_SERVERS}")
     print(f"Listening to topic: {TOPIC_NAME}")
-    print(f"Saving to: {STAGING_DIR}")
+    if USE_S3:
+        print(f"Storage: S3 ({S3_BUCKET_NAME})")
+    else:
+        print(f"Storage: Local")
     print("-" * 60)
     
     buffer = []
@@ -87,8 +105,9 @@ def run_consumer():
                 else:
                     pred = result.get("prediction", "N/A")
                     prob = result.get("fraud_probability", "N/A")
+                    prob_pct = prob * 100
                     msg = result.get("message", "N/A")
-                    print(f"[{transaction_key}] Time: {transaction_time} | Prediction: {pred} | Probability: {prob:.4f} | {msg}")
+                    print(f"[{transaction_key}] Time: {transaction_time} | Prediction: {pred} | Fraud Probability: {prob_pct:.2f}% | {msg}")
                 
                 if len(buffer) >= BATCH_SIZE:
                     batch_id += 1

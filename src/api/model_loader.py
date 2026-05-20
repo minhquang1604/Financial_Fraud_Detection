@@ -1,6 +1,5 @@
 import os
 import sys
-import pickle
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -10,101 +9,126 @@ sys.path.insert(0, PROJECT_ROOT)
 
 import mlflow
 import mlflow.sklearn
-import joblib
 from src.train.utils import get_feature_columns
 
 
-MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5000")
-MODEL_NAME = "fraud_model_xgboost"
-MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "model")
+MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://13.215.163.1:5000")
+MODEL_NAME = "FraudDetectionModel"
 
 
-def load_model_from_mlflow():
+def load_model_from_mlflow(stage: str = None, version: int = None):
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
     
     client = mlflow.tracking.MlflowClient()
     
     try:
-        all_versions = client.search_model_versions("name='FraudDetectionModel'")
+        all_versions = client.search_model_versions(f"name='{MODEL_NAME}'")
         
         if not all_versions:
-            raise ValueError("No model versions found in MLflow")
+            raise ValueError(f"No versions found for model: {MODEL_NAME}")
         
-        latest_version = sorted(all_versions, key=lambda x: x.version, reverse=True)[0]
+        if version:
+            target_version = next((v for v in all_versions if v.version == version), None)
+        elif stage:
+            target_version = next((v for v in all_versions if v.current_stage == stage), None)
+        else:
+            target_version = next((v for v in all_versions if v.current_stage == "Production"), None)
+            if not target_version:
+                target_version = sorted(all_versions, key=lambda x: x.version, reverse=True)[0]
         
-        run_id = latest_version.run_id
-        threshold = 0.5
+        if not target_version:
+            raise ValueError(f"No version found for stage={stage}, version={version}")
+        
+        run_id = target_version.run_id
+        run = client.get_run(run_id)
+        
+        threshold = run.data.metrics.get("threshold") or run.data.params.get("threshold", 0.5)
+        threshold = float(threshold)
+        
+        model_uri = f"models:/{MODEL_NAME}/{target_version.version}"
         
         try:
-            run = client.get_run(run_id)
-            if "threshold" in run.data.params:
-                threshold = float(run.data.params["threshold"])
-        except Exception:
-            pass
-        
-        # Try loading from registered model first
-        try:
-            model = mlflow.sklearn.load_model(
-                model_uri=f"models:/FraudDetectionModel/{latest_version.version}"
-            )
-            print(f"Model loaded from MLflow: FraudDetectionModel v{latest_version.version}, threshold: {threshold}")
+            model = mlflow.sklearn.load_model(model_uri=model_uri)
+            print(f"Model loaded from MLflow Registry: {MODEL_NAME}/{target_version.version}")
             return {
                 "model": model,
-                "threshold": threshold,
+                "threshold": float(threshold),
                 "features": get_feature_columns(),
                 "reference_stats": None
             }
         except Exception as load_err:
-            # Fallback: load directly from run's artifact path
-            print(f"Registered model load failed: {load_err}, trying run artifact...")
-            model = mlflow.sklearn.load_model(
-                model_uri=f"runs:/{run_id}/model/model"
-            )
-            print(f"Model loaded from run: {run_id}, threshold: {threshold}")
-            return {
-                "model": model,
-                "threshold": threshold,
-                "features": get_feature_columns(),
-                "reference_stats": None
-            }
-        
+            if "MLmodel" in str(load_err) or "No such artifact" in str(load_err):
+                print(f"Registry artifact path incorrect, using direct artifact URI")
+                artifact_uri = run.info.artifact_uri.rstrip('/')
+                model = mlflow.sklearn.load_model(f"{artifact_uri}/model/model")
+                print(f"Model loaded from artifact: {MODEL_NAME}/{target_version.version}")
+                return {
+                    "model": model,
+                    "threshold": float(threshold),
+                    "features": get_feature_columns(),
+                    "reference_stats": None
+                }
+            raise
+    
     except Exception as e:
         raise ValueError(f"Failed to load from MLflow: {e}")
 
 
-def load_model_local():
-    model_path = os.path.join(MODEL_DIR, "fraud_model.pkl")
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Model not found at {model_path}")
-    
-    with open(model_path, 'rb') as f:
-        model_data = pickle.load(f)
-    
-    model = model_data["model"]
-    if hasattr(model, '__dict__'):
-        for key in list(model.__dict__.keys()):
-            if 'label_encoder' in key.lower() or key == 'use_label_encoder':
-                del model.__dict__[key]
-    
-    if hasattr(model, 'set_params'):
-        try:
-            params = model.get_params()
-            if 'use_label_encoder' in params:
-                model.set_params(**{k: v for k, v in params.items() if k != 'use_label_encoder'})
-        except:
-            pass
-    
-    print(f"Model loaded from local: {model_path}")
-    return model_data
-
-
 def get_model():
+    return load_model_from_mlflow()
+
+
+def get_model_info(stage: str = None, version: int = None) -> dict:
+    """
+    Get model info including threshold and metrics from MLflow.
+    """
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    
+    client = mlflow.tracking.MlflowClient()
+    
     try:
-        return load_model_from_mlflow()
+        all_versions = client.search_model_versions(f"name='{MODEL_NAME}'")
+        
+        if not all_versions:
+            raise ValueError(f"No versions found for model: {MODEL_NAME}")
+        
+        if version:
+            target_version = next((v for v in all_versions if v.version == version), None)
+        elif stage:
+            target_version = next((v for v in all_versions if v.current_stage == stage), None)
+        else:
+            target_version = next((v for v in all_versions if v.current_stage == "Production"), None)
+            if not target_version:
+                target_version = sorted(all_versions, key=lambda x: x.version, reverse=True)[0]
+        
+        if not target_version:
+            raise ValueError(f"No version found for stage={stage}, version={version}")
+        
+        run_id = target_version.run_id
+        run = client.get_run(run_id)
+        
+        metrics = run.data.metrics
+        params = run.data.params
+        
+        threshold = metrics.get("threshold") or params.get("threshold", 0.5)
+        threshold = float(threshold)
+        f1_score = metrics.get("F1", 0.0)
+        auprc = metrics.get("AUPRC", 0.0)
+        
+        return {
+            "version": target_version.version,
+            "stage": target_version.current_stage,
+            "run_id": run_id,
+            "threshold": float(threshold),
+            "metrics": {
+                "F1": float(f1_score),
+                "AUPRC": float(auprc)
+            },
+            "created_at": run.info.end_time
+        }
+    
     except Exception as e:
-        print(f"Could not load from MLflow: {e}")
-        print("Falling back to local model...")
-        return load_model_local()
+        raise ValueError(f"Failed to get model info from MLflow: {e}")
 
 
 def predict_with_booster(model_data, X):
@@ -128,9 +152,10 @@ def predict_with_booster(model_data, X):
     else:
         dtest = xgb.DMatrix(X_arr)
     
-    raw_pred = booster.predict(dtest)
+    raw_pred = booster.predict(dtest, output_margin=False)
     raw_pred = np.asarray(raw_pred).flatten()
-    prob = 1 / (1 + np.exp(-raw_pred))
+    
+    prob = np.clip(raw_pred, 0, 1)
     
     if len(prob) == 1:
         return np.array([prob[0]])
@@ -145,11 +170,21 @@ def predict_proba_safe(model_data, X):
     
     try:
         if isinstance(X, pd.DataFrame):
-            return model.predict_proba(X)[:, 1]
+            proba = model.predict_proba(X)[:, 1]
         else:
-            return model.predict_proba(X)[:, 1]
-    except (AttributeError, TypeError) as e:
-        if 'use_label_encoder' in str(e) or 'gpu_id' in str(e) or 'predictor' in str(e):
-            print(f"XGBoost version mismatch, using booster fallback")
-            return predict_with_booster(model_data, X)
-        raise
+            proba = model.predict_proba(X)[:, 1]
+    except Exception as e:
+        print(f"predict_proba error: {e}")
+        proba = model.predict(X)
+        if len(proba.shape) > 1 and proba.shape[1] > 1:
+            proba = proba[:, 1]
+        else:
+            proba = proba
+    
+    proba = np.asarray(proba).flatten()
+    
+    proba = np.clip(proba, 0.0001, 0.9999)
+    
+    print(f"Raw proba: min={proba.min():.4f}, max={proba.max():.4f}, mean={proba.mean():.4f}")
+    
+    return proba

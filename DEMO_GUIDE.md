@@ -75,25 +75,7 @@ source venv/bin/activate
 
 ## Demo Commands
 
-### Bước 1: Tạo 20% test data → staging (không có Class)
 
-```bash
-python -c "
-import pandas as pd
-import numpy as np
-
-# Load dataset gốc
-df = pd.read_csv('data/raw/creditcard.csv')
-df = df.sample(frac=0.2, random_state=42)
-
-# Xóa cột Class (giả lập chưa có label)
-staging_df = df.drop('Class', axis=1)
-
-# Lưu vào staging
-staging_df.to_parquet('data/staging/staging_batch_v1.parquet', index=False)
-print(f'Tạo staging: {len(staging_df)} records')
-"
-```
 
 ### Bước 2: Start Services
 

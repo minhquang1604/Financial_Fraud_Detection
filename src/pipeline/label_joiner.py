@@ -5,6 +5,12 @@ from typing import Dict, Any, List
 
 import pandas as pd
 
+from dotenv import load_dotenv
+load_dotenv()
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "mlops"))
+from s3_manager import S3DataManager
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -18,11 +24,10 @@ PROJECT_ROOT = os.path.dirname(
     )
 )
 
-RAW_DATA_PATH = os.path.join(
+RAW_DATA_DIR = os.path.join(
     PROJECT_ROOT,
     "data",
-    "raw",
-    "creditcard.csv"
+    "raw"
 )
 
 REALTIME_DIR = os.path.join(
@@ -37,32 +42,49 @@ LABELED_DIR = os.path.join(
     "labeled"
 )
 
+USE_S3 = os.environ.get("USE_S3", "true").lower() == "true"
+S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "")
+
 
 class LabelJoiner:
 
     def __init__(
         self,
-        raw_data_path: str = RAW_DATA_PATH,
+        raw_data_dir: str = RAW_DATA_DIR,
         realtime_dir: str = REALTIME_DIR,
         labeled_dir: str = LABELED_DIR
     ):
-        self.raw_data_path = raw_data_path
+        self.raw_data_dir = raw_data_dir
         self.realtime_dir = realtime_dir
         self.labeled_dir = labeled_dir
 
         os.makedirs(self.realtime_dir, exist_ok=True)
         os.makedirs(self.labeled_dir, exist_ok=True)
 
+        self.s3_manager = S3DataManager() if USE_S3 else None
+
         self._load_reference_data()
 
-    # =========================
-    # Load reference dataset
-    # =========================
+    def _ensure_raw_data(self):
+        csv_path = os.path.join(self.raw_data_dir, "creditcard.csv")
+        if not os.path.exists(csv_path) and self.s3_manager:
+            logger.info("Downloading creditcard.csv from S3...")
+            s3_path = "data/raw/creditcard.csv"
+            try:
+                df = self.s3_manager.download_dataframe(s3_path, "csv")
+                os.makedirs(self.raw_data_dir, exist_ok=True)
+                df.to_csv(csv_path, index=False)
+                logger.info(f"Downloaded to {csv_path}")
+            except Exception as e:
+                logger.error(f"Failed to download raw data: {e}")
+                raise
+        return csv_path
+
     def _load_reference_data(self):
+        csv_path = self._ensure_raw_data()
+        logger.info(f"Loading reference data from: {csv_path}")
 
-        logger.info(f"Loading reference data from: {self.raw_data_path}")
-
-        self.reference_df = pd.read_csv(self.raw_data_path)
+        self.reference_df = pd.read_csv(csv_path)
 
         logger.info(f"Loaded {len(self.reference_df)} reference records")
 
@@ -96,6 +118,29 @@ class LabelJoiner:
     # Load realtime parquet files
     # =========================
     def _load_realtime_files(self) -> tuple[pd.DataFrame, List[str]]:
+
+        if USE_S3 and self.s3_manager:
+            files = self.s3_manager.list_files("realtime")
+            if not files:
+                raise FileNotFoundError("No realtime files found in S3")
+
+            logger.info(f"Found {len(files)} realtime files in S3")
+
+            dfs = []
+            for s3_path in files:
+                try:
+                    df = self.s3_manager.download_dataframe(s3_path, "parquet")
+                    logger.info(f"Downloaded {len(df)} records from {s3_path}")
+                    dfs.append(df)
+                except Exception as e:
+                    logger.error(f"Failed to read {s3_path}: {e}")
+
+            if not dfs:
+                raise ValueError("No valid parquet files could be loaded from S3")
+
+            combined_df = pd.concat(dfs, ignore_index=True)
+            logger.info(f"Combined dataframe contains {len(combined_df)} records")
+            return combined_df, files
 
         files = [
             os.path.join(self.realtime_dir, f)
@@ -179,14 +224,16 @@ class LabelJoiner:
 
             version = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-            output_file = os.path.join(
-                self.labeled_dir,
-                f"labeled_batch_{version}.parquet"
-            )
+            output_file = f"labeled_batch_{version}.parquet"
 
-            labeled_df.to_parquet(output_file, index=False)
-
-            logger.info(f"Labeled dataset saved to: {output_file}")
+            if USE_S3 and self.s3_manager:
+                s3_path = self.s3_manager.upload_dataframe(labeled_df, "labeled", output_file, "parquet")
+                output_file = s3_path
+                logger.info(f"Labeled dataset uploaded to S3: s3://{s3_path}")
+            else:
+                output_file = os.path.join(self.labeled_dir, output_file)
+                labeled_df.to_parquet(output_file, index=False)
+                logger.info(f"Labeled dataset saved to: {output_file}")
 
             return {
                 "success": True,
