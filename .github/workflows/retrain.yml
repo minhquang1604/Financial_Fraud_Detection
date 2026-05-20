@@ -95,12 +95,13 @@ jobs:
           # Download ALL realtime data
           print('=== REALTIME DATA ===')
           response = s3.list_objects_v2(Bucket=bucket, Prefix='data/realtime/')
+          print(f'S3 response keys: {list(response.keys())}')
           if 'Contents' in response and len(response['Contents']) > 0:
               files = sorted([f['Key'] for f in response['Contents']])
               print(f'Found {len(files)} realtime files in S3')
               for f in files:
-                  key = f['Key']
-                  local_file = f'data/realtime/{key.split(\"/\")[-1]}'
+                  key = f['Key'] if isinstance(f, dict) else f
+                  local_file = f'data/realtime/{key.split("/")[-1]}'
                   s3.download_file(bucket, key, local_file)
                   print(f'Downloaded: {key}')
               print(f'Total realtime files: {len(files)}')
@@ -111,10 +112,9 @@ jobs:
           print('=== RAW DATA ===')
           response = s3.list_objects_v2(Bucket=bucket, Prefix='data/raw/')
           if 'Contents' in response and len(response['Contents']) > 0:
-              files = [f['Key'] for f in response['Contents'] if f['Key'].endswith('.csv')]
-              for f in files:
-                  key = f['Key']
-                  local_file = f'data/raw/{key.split(\"/\")[-1]}'
+              files = [f['Key'] if isinstance(f, dict) else f for f in response['Contents'] if (f['Key'] if isinstance(f, dict) else f).endswith('.csv')]
+              for key in files:
+                  local_file = f'data/raw/{key.split("/")[-1]}'
                   s3.download_file(bucket, key, local_file)
                   print(f'Downloaded: {key}')
           else:
