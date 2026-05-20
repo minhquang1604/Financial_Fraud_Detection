@@ -519,17 +519,14 @@ class RetrainPipeline:
                 "Logging model to MLflow..."
             )
 
-            artifact_path = "fraud_model"
-            
-            mlflow.sklearn.log_model(
+            model_uri = mlflow.sklearn.log_model(
                 sk_model=model,
-                artifact_path=artifact_path,
-                signature=signature,
-                registered_model_name=MODEL_NAME
+                artifact_path="fraud_model",
+                signature=signature
             )
 
             logger.info(
-                "Model logged successfully"
+                f"Model logged to: {model_uri}"
             )
 
             # =========================================
@@ -539,19 +536,13 @@ class RetrainPipeline:
             client = MlflowClient()
 
             try:
-
-                client.create_registered_model(
-                    MODEL_NAME
-                )
-
+                client.create_registered_model(MODEL_NAME)
             except Exception:
                 pass
 
             run_id = run.info.run_id
-
-            model_uri = (
-                f"runs:/{run_id}/model"
-            )
+            
+            model_uri = f"runs:/{run_id}/fraud_model"
 
             mv = client.create_model_version(
                 name=MODEL_NAME,
@@ -559,10 +550,7 @@ class RetrainPipeline:
                 run_id=run_id
             )
 
-            logger.info(
-                f"Registered model "
-                f"version={mv.version}"
-            )
+            logger.info(f"Registered model version={mv.version}")
 
             # =========================================
             # SET PRODUCTION STAGE
