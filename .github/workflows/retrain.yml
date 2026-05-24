@@ -84,7 +84,7 @@ jobs:
           response = s3.list_objects_v2(Bucket=bucket, Prefix='data/train/')
           if 'Contents' in response and len(response['Contents']) > 0:
               keys = [item['Key'] if isinstance(item, dict) else item for item in response['Contents']]
-              keys = sorted(keys)
+              keys = sorted([k for k in keys if not k.endswith('/')])
               latest_key = keys[-1]
               local_file = 'data/train/' + latest_key.split('/')[-1]
               s3.download_file(bucket, latest_key, local_file)
@@ -98,7 +98,7 @@ jobs:
           response = s3.list_objects_v2(Bucket=bucket, Prefix='data/realtime/')
           if 'Contents' in response and len(response['Contents']) > 0:
               keys = [item['Key'] if isinstance(item, dict) else item for item in response['Contents']]
-              keys = sorted(keys)
+              keys = sorted([k for k in keys if not k.endswith('/')])
               print('Found ' + str(len(keys)) + ' realtime files in S3')
               for key in keys:
                   local_file = 'data/realtime/' + key.split('/')[-1]
