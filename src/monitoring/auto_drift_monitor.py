@@ -3,11 +3,26 @@ import sys
 import time
 import json
 import logging
+import threading
 from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, Any, Optional
 
 import pandas as pd
 import numpy as np
+
+from prometheus_client import Gauge, generate_latest, CONTENT_TYPE_LATEST
+
+
+DATA_DRIFT_SCORE = Gauge('data_drift_score', 'Data drift score (lower = more drift)')
+CONCEPT_DRIFT_SCORE = Gauge('concept_drift_score', 'Concept drift score (higher = more drift)')
+MODEL_F1_SCORE = Gauge('model_f1_score', 'Current model F1 score')
+MODEL_PRECISION = Gauge('model_precision', 'Current model precision')
+MODEL_RECALL = Gauge('model_recall', 'Current model recall')
+DRIFT_ALERT_TRIGGERED = Gauge('drift_alert_triggered', 'Whether drift alert is triggered')
+TRAINING_DATA_COUNT = Gauge('training_data_count', 'Number of training records available')
+
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,6 +53,7 @@ class AutoRetrainTrigger:
     MIN_NEW_DATA = 1000
     RETRAIN_COOLDOWN_HOURS = 24  # Min time between retrains
     STAGING_DIR = os.path.join(PROJECT_ROOT, "data", "staging")
+    REALTIME_DIR = os.path.join(PROJECT_ROOT, "data", "realtime")
     LABELED_DIR = os.path.join(PROJECT_ROOT, "data", "labeled")
     MODEL_DIR = os.path.join(PROJECT_ROOT, "model")
     
@@ -128,17 +144,14 @@ class AutoRetrainTrigger:
                 logger.warning(f"S3 staging load failed: {e}")
                 combined = pd.DataFrame()
         else:
-            if not os.path.exists(self.STAGING_DIR):
-                return pd.DataFrame()
-            
-            files = [f for f in os.listdir(self.STAGING_DIR) if f.endswith('.parquet')]
-            if not files:
-                return pd.DataFrame()
-            
+            dirs_to_check = [self.STAGING_DIR, self.REALTIME_DIR]
             dfs = []
-            for f in files:
-                df = pd.read_parquet(os.path.join(self.STAGING_DIR, f))
-                dfs.append(df)
+            for d in dirs_to_check:
+                if os.path.exists(d):
+                    files = [f for f in os.listdir(d) if f.endswith('.parquet')]
+                    for f in files:
+                        df = pd.read_parquet(os.path.join(d, f))
+                        dfs.append(df)
             
             if not dfs:
                 return pd.DataFrame()
@@ -436,18 +449,56 @@ class AutoRetrainTrigger:
             logger.error(f"Webhook error: {e}")
             return False
     
+    def _update_prometheus_metrics(self, report: Dict[str, Any]):
+        data_drift = report.get("data_drift", {})
+        concept_drift = report.get("concept_drift", {})
+
+        DATA_DRIFT_SCORE.set(data_drift.get("drift_share", 0))
+        CONCEPT_DRIFT_SCORE.set(concept_drift.get("ks_statistic", 0))
+        DRIFT_ALERT_TRIGGERED.set(1 if report.get("alert_triggered") else 0)
+
+        metrics = getattr(self, 'model_data', {})
+        if isinstance(metrics, dict):
+            MODEL_F1_SCORE.set(metrics.get("metrics", {}).get("F1", 0))
+            MODEL_PRECISION.set(metrics.get("metrics", {}).get("precision", 0))
+            MODEL_RECALL.set(metrics.get("metrics", {}).get("recall", 0))
+
+        TRAINING_DATA_COUNT.set(len(self._load_staging_data()) + len(self._load_labeled_data()))
+
+    def _start_metrics_server(self):
+        class MetricsHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/metrics":
+                    self.send_response(200)
+                    self.send_header("Content-Type", CONTENT_TYPE_LATEST)
+                    self.end_headers()
+                    self.wfile.write(generate_latest())
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+            def log_message(self, format, *args):
+                pass
+
+        server = HTTPServer(("0.0.0.0", 8001), MetricsHandler)
+        logger.info("Prometheus metrics server started on port 8001")
+        server.serve_forever()
+
     def run(self):
         logger.info("=" * 60)
         logger.info("AUTO DRIFT MONITOR + RETRAIN")
         logger.info(f"Interval: {self.interval}s")
         logger.info(f"Auto retrain: {self.auto_retrain}")
         logger.info("=" * 60)
+
+        metrics_thread = threading.Thread(target=self._start_metrics_server, daemon=True)
+        metrics_thread.start()
         
         self.running = True
         
         while self.running:
             try:
                 report = self._run_drift_check()
+                self._update_prometheus_metrics(report)
                 
                 if report.get("alert_triggered"):
                     self._process_drift_alert(report)

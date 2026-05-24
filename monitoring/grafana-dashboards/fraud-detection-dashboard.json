@@ -165,7 +165,7 @@
       },
       "gridPos": {"h": 8, "w": 8, "x": 0, "y": 24},
       "id": 8,
-      "options": {"colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"values": false, "calcs": ["sum"]}, "textMode": "auto"},
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"values": true, "calcs": ["lastNotNull"]}, "textMode": "auto"},
       "pluginVersion": "8.0.0",
       "targets": [{"expr": "sum by (prediction) (fraud_predictions_total)", "legendFormat": "Prediction {{prediction}}", "refId": "A"}],
       "title": "Total Predictions by Class",
