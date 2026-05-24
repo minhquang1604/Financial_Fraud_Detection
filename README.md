@@ -39,6 +39,9 @@ Producer → Kafka → Consumer → S3 → Label → Train → S3 → API
 ## Quick Start
 
 ### 1. Start Infrastructure
+```bash
+source venv/bin/activate
+```
 
 ```bash
 docker-compose up -d
@@ -67,11 +70,6 @@ python -m src.train.train
 ```
 
 ### 4. Start API
-source venv/bin/activate
-```bash
-# Start all services (Kafka + MLflow + Monitoring)
-docker-compose up -d
-```
 
 ```bash
 python -m src.api.main
@@ -88,27 +86,11 @@ python -m src.streaming.producer
 python -m src.streaming.consumer
 ```
 
-### 6. Label & Retrain
+### 6. Retrain
 
 ```bash
-# Gán nhãn cho realtime data
-python -m src.pipeline.label_joiner
-
-# Mix data + Retrain
-python -m src.pipeline.prepare_data
-python -m src.pipeline.retrain_pipeline
-```
-
-## Auto Retrain (100% Webhook)
-
-Drift detection → Webhook → GitHub Actions → Auto retrain
-
-```bash
-# Trigger manual retrain
-gh workflow run retrain.yml -f trigger_type=manual
-
-# Hoặc trigger từ GitHub UI
-# https://github.com/minhquang1604/Financial_Fraud_Detection/actions
+# Retrain (--interval 300 là mỗi 300s check một lần nếu muốn có thể chỉnh xuống)
+python -m src.monitoring.auto_drift_monitor --model mlflow:Production --interval 300
 ```
 
 **GitHub Secrets cần thiết:**
@@ -189,7 +171,7 @@ KAFKA_BOOTSTRAP_SERVERS=localhost:9092
 MLFLOW_TRACKING_URI=http://13.229.113.113:5000
 
 # Webhook (for auto retrain)
-DRIFT_WEBHOOK_URL=https://api.github.com/repos/owner/repo/actions/workflows/retrain.yml/dispatch
+DRIFT_WEBHOOK_URL=https://api.github.com/repos/owner/repo/dispatches
 PAT_TOKEN=ghp_your_token
 ```
 
@@ -210,7 +192,3 @@ Alerts configured:
 - High fraud prediction ratio
 - Model drift detected (PSI > 0.1)
 - Data drift detected
-
-## License
-
-MIT
