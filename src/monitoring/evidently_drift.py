@@ -143,8 +143,15 @@ class EvidentlyDriftMonitor:
         
         return drift_detected, drift_share
     
+    def _fix_xgboost_model(self):
+        try:
+            self.model.use_label_encoder = False
+        except AttributeError:
+            pass
+
     def detect_prediction_drift(self, current_data: pd.DataFrame) -> Dict[str, Any]:
         logger.info("Detecting prediction drift with Evidently AI...")
+        self._fix_xgboost_model()
         
         try:
             current_predictions = self.model.predict_proba(current_data[self.feature_columns])[:, 1]
@@ -183,6 +190,7 @@ class EvidentlyDriftMonitor:
             return self.detect_prediction_drift(current_data)
     
     def _detect_with_labels(self, current_data: pd.DataFrame, current_labels: np.ndarray) -> Dict[str, Any]:
+        self._fix_xgboost_model()
         try:
             from sklearn.metrics import precision_score, recall_score, f1_score
             

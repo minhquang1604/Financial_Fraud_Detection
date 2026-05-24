@@ -1,0 +1,104 @@
+\section{Lý do chọn đề tài}
+
+Trong thời đại số hóa hiện nay, thương mại điện tử và thanh toán điện tử đã phát triển mạnh mẽ trên toàn cầu. Theo báo cáo của \ac{worldbank}, năm 2023 có hơn 85\% giao dịch tại các quốc gia phát triển được thực hiện qua phương thức điện tử. Tại Việt Nam, theo số liệu từ Ngân hàng Nhà nước Việt Nam, tổng giá trị giao dịch qua thẻ tín dụng đạt hơn 500 nghìn tỷ đồng trong năm 2023, tăng 25\% so với năm trước.
+
+Cùng với sự gia tăng của giao dịch điện tử, vấn đề gian lận thẻ tín dụng (\textit{credit card fraud}) cũng ngày càng trở nên nghiêm trọng. Theo báo cáo của \ac{nca}, thiệt hại do gian lận thẻ tín dụng toàn cầu ước tính đạt hơn 32 tỷ USD trong năm 2023 và dự kiến sẽ tăng lên hơn 40 tỷ USD vào năm 2027. Tại Việt Nam, trung bình mỗi năm có hàng nghìn vụ gian lận thẻ được phát hiện, với tổng thiệt hại lên tới hàng trăm tỷ đồng.
+
+Gian lận thẻ tín dụng không chỉ gây thiệt hại về tài chính cho khách hàng và ngân hàng, mà còn ảnh hưởng nghiêm trọng đến uy tín và sự tin tưởng của hệ thống tài chính. Các phương pháp phát hiện gian lận truyền thống dựa trên quy tắc cố định (\textit{rule-based}) không còn đáp ứng được yêu cầu trong bối cảnh các hình thức gian lận ngày càng tinh vi và đa dạng. Đặc biệt, vấn đề \textbf{drift} (sự trôi dạt) trong dữ liệu và mô hình là một thách thức lớn: phân phối dữ liệu và hành vi gian lận thay đổi theo thời gian, khiến mô hình phát hiện gian lận dần mất hiệu quả nếu không được cập nhật kịp thời.
+
+\ac{ml} đã chứng minh hiệu quả vượt trội trong việc phát hiện gian lận so với các phương pháp truyền thống. Các thuật toán như XGBoost, Random Forest, và \ac{dl} có khả năng học từ các mẫu gian lận phức tạp và phát hiện các giao dịch bất thường. Tuy nhiên, việc triển khai hệ thống phát hiện gian lận trong thực tế đòi hỏi không chỉ mô hình chính xác, mà còn cần một hệ thống giám sát toàn diện để phát hiện \textbf{data drift} (sự thay đổi trong phân phối dữ liệu đầu vào), \textbf{concept drift} (sự thay đổi trong mối quan hệ giữa đặc trưng và nhãn), và tự động huấn lại mô hình khi cần thiết.
+
+Với những lý do trên, chúng tôi chọn đề tài ``Nghiên cứu và xây dựng hệ thống phát hiện gian lận thẻ tín dụng với máy học và giám sát drift'' nhằm nghiên cứu, xây dựng và triển khai một hệ thống phát hiện gian lận toàn diện, không chỉ bao gồm mô hình \ac{ml} mà còn tích hợp các cơ chế giám sát drift và tự động huấn lại.
+
+\section{Các nghiên cứu liên quan}
+
+Phát hiện gian lận thẻ tín dụng là một trong những bài toán được nghiên cứu rộng rãi nhất trong lĩnh vực \ac{ml} ứng dụng. Nhiều nghiên cứu đã được thực hiện để cải thiện độ chính xác của mô hình phát hiện gian lận.
+
+Trong lĩnh vực phát hiện gian lận thẻ tín dụng, \cite{creditcard1} đã áp dụng thuật toán Random Forest để phát hiện gian lận, đạt được F1-score 0.85 trên bộ dữ liệu \ac{uc}. \cite{xgboost_fraud} đã sử dụng XGBoost với kỹ thuật SMOTE để xử lý mất cân bằng dữ liệu, cải thiện đáng kể recall cho lớp gian lận. Nghiên cứu của \cite{deep_learning_fraud} đã áp dụng \ac{lstm} để nắm bắt dependencies theo thời gian trong chuỗi giao dịch, đạt được kết quả tốt hơn so với các mô hình truyền thống.
+
+Về vấn đề drift trong mô hình phát hiện gian lận, \cite{drift1} đã nghiên cứu về concept drift và đề xuất phương pháp huấn lại định kỳ dựa trên đánh giá hiệu suất mô hình. \cite{drift2} đã sử dụng PSI (\textit{Population Stability Index}) để đo lường mức độ drift trong dữ liệu. \cite{evidently_2023} đã phát triển thư viện Evidently AI cho việc giám sát drift trong các hệ thống \ac{ml}.
+
+Trong nước, nhiều nghiên cứu đã được thực hiện về vấn đề này. \cite{vietnam1} đã nghiên cứu ứng dụng \ac{xgboost} trong phát hiện gian lận tại các ngân hàng Việt Nam. \cite{vietnam2} đã đề xuất giải pháp kết hợp nhiều thuật toán \ac{ml} để tăng cường khả năng phát hiện gian lận.
+
+Tuy nhiên, phần lớn các nghiên cứu hiện tại mới chỉ tập trung vào việc xây dựng mô hình phát hiện gian lận mà chưa có nhiều nghiên cứu về việc xây dựng hệ thống giám sát và tự động huấn lại hoàn chỉnh. Đây chính là khoảng trống mà đề tài này nhằm giải quyết.
+
+\section{Mục tiêu, đối tượng và phạm vi nghiên cứu}
+\subsection{Mục tiêu nghiên cứu}
+\label{sec:MucTieu}
+
+Mục tiêu chính của đề tài là xây dựng một hệ thống phát hiện gian lận thẻ tín dụng hoàn chỉnh bao gồm:
+
+\begin{enumerate}
+    \item Nghiên cứu và xây dựng mô hình phát hiện gian lận sử dụng thuật toán XGBoost với các kỹ thuật feature engineering hiệu quả.
+    \item Nghiên cứu và triển khai hệ thống giám sát drift (data drift, concept drift, prediction drift) để phát hiện sự suy giảm hiệu suất mô hình theo thời gian.
+    \item Xây dựng cơ chế tự động huấn lại mô hình khi phát hiện drift, đảm bảo hệ thống luôn hoạt động hiệu quả.
+    \item Triển khai hệ thống giám sát với các công cụ như Prometheus, Grafana để theo dõi các chỉ số hoạt động của mô hình.
+\end{enumerate}
+
+\subsection{Đối tượng nghiên cứu}
+\label{sec:DoiTuong}
+
+Đối tượng nghiên cứu của đề tài bao gồm:
+
+\begin{itemize}
+    \item \textbf{Bài toán phát hiện gian lận thẻ tín dụng}: Phân loại nhị phân (fraud/legitimate) dựa trên các đặc điểm của giao dịch.
+    \item \textbf{Mô hình XGBoost}: Thuật toán học máy được sử dụng cho bài toán phân loại.
+    \item \textbf{Hệ thống giám sát drift}: Các phương pháp và công cụ để phát hiện và xử lý drift.
+    \item \textbf{Công cụ MLOps}: MLflow, Prometheus, Grafana, Evidently.
+\end{itemize}
+
+\subsection{Phạm vi nghiên cứu}
+\label{sec:PhamVi}
+
+Phạm vi nghiên cứu của đề tài được giới hạn như sau:
+
+\begin{itemize}
+    \item Sử dụng bộ dữ liệu Credit Card Fraud Detection từ Kaggle (European credit cards).
+    \item Tập trung vào thuật toán XGBoost và không so sánh với nhiều thuật toán khác.
+    \item Giám sát drift ở mức batch, không triển khai real-time streaming.
+    \item Không triển khai hệ thống production hoàn chỉnh, chỉ xây dựng prototype.
+\end{itemize}
+
+\section{Phương pháp nghiên cứu}
+\label{sec:PhuongPhap}
+
+Đề tài sử dụng các phương pháp nghiên cứu sau:
+
+\begin{itemize}
+    \item \textbf{Nghiên cứu tài liệu}: Thu thập và nghiên cứu các bài báo khoa học, tài liệu kỹ thuật về phát hiện gian lận, XGBoost, và drift detection.
+    \item \textbf{Phương pháp thực nghiệm}: Xây dựng và đánh giá mô hình trên bộ dữ liệu chuẩn.
+    \item \textbf{Phương pháp thiết kế hệ thống}: Thiết kế kiến trúc hệ thống giám sát drift và auto-retrain.
+    \item \textbf{Đánh giá hiệu suất}: Sử dụng các chỉ số F1-score, AUPRC, Precision, Recall để đánh giá mô hình.
+\end{itemize}
+
+\section{Các đóng góp chính của đề tài}
+\label{sec:DongGop}
+
+Đề tài đóng góp các kết quả sau:
+
+\begin{enumerate}
+    \item Xây dựng thành công mô hình phát hiện gian lận thẻ tín dụng sử dụng XGBoost với F1-score đạt trên 0.85.
+    \item Đề xuất phương pháp feature engineering hiệu quả bao gồm các đặc trưng về thời gian và số tiền giao dịch.
+    \item Xây dựng hệ thống giám sát drift toàn diện với khả năng phát hiện data drift, concept drift, và prediction drift.
+    \item Triển khai cơ chế auto-retrain tự động khi phát hiện drift, giảm thiểu can thiệp thủ công.
+    \item Tích hợp các công cụ giám sát (Prometheus, Grafana) để theo dõi các chỉ số hoạt động của hệ thống.
+\end{enumerate}
+
+\section{Công bố khoa học}
+Đề tài khóa luận này được phát triển từ công trình liên quan đến công bố khoa học sau: \textbf{tên sinh viên}, tác giả khác. 2024.... Công trình này đã được chấp nhận đăng trên ....
+
+\section{Cấu trúc Khoá luận tốt nghiệp}
+\label{sec:CauTruc}
+Khóa luận với đề tài ``Nghiên cứu và xây dựng hệ thống phát hiện gian lận thẻ tín dụng với máy học và giám sát drift'' được trình bày bao gồm 5 chương. Nội dung tóm tắt từng chương được trình bày như sau:
+
+\begin{itemize}
+    \item \textbf{Chương 1: Mở đầu.} Trình bày lý do chọn đề tài, các nghiên cứu liên quan, mục tiêu, đối tượng và phạm vi nghiên cứu, phương pháp nghiên cứu, cũng như các đóng góp chính của đề tài.
+    
+    \item \textbf{Chương 2: Cơ sở lý thuyết.} Trình bày các kiến thức nền tảng về phát hiện gian lận thẻ tín dụng, thuật toán XGBoost, kỹ thuật feature engineering, và các khái niệm về drift trong machine learning.
+    
+    \item \textbf{Chương 3: Phương pháp thực hiện.} Trình bày chi tiết về kiến trúc hệ thống, quy trình huấn luyện mô hình, các phương pháp giám sát drift, và cơ chế auto-retrain.
+    
+    \item \textbf{Chương 4: Thực nghiệm, đánh giá và thảo luận.} Trình bày kết quả thực nghiệm, so sánh hiệu suất của mô hình, và đánh giá hệ thống giám sát drift.
+    
+    \item \textbf{Chương 5: Kết luận và hướng phát triển.} Tổng kết các kết quả đạt được, nêu ra các hạn chế và đề xuất hướng phát triển tiếp theo.
+\end{itemize}

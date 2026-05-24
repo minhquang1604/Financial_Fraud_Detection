@@ -153,7 +153,7 @@ class MonitoringServer:
                     f"alert_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
                 )
                 
-                self._trigger_retrainWebhook(report)
+                self._trigger_retrain_webhook(report)
             else:
                 logger.info("No drift detected")
                 

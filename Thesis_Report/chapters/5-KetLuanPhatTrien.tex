@@ -1,0 +1,155 @@
+Trong chương này, chúng tôi tổng kết các kết quả đã đạt được trong suốt quá trình thực hiện đề tài. Đồng thời, chúng tôi cũng phân tích các hạn chế và đề xuất các hướng phát triển tiếp theo để cải thiện và hoàn thiện hệ thống phát hiện gian lận thẻ tín dụng.
+
+\section{Kết luận}
+
+Sau khi hoàn thành đề tài ``Nghiên cứu và xây dựng hệ thống phát hiện gian lận thẻ tín dụng với máy học và giám sát drift'', chúng tôi đã đạt được các kết quả sau đây:
+
+\subsection{Các kết quả đạt được}
+
+\begin{enumerate}
+    \item \textbf{Xây dựng mô hình phát hiện gian lận}: Chúng tôi đã xây dựng thành công mô hình phát hiện gian lận thẻ tín dụng sử dụng thuật toán XGBoost với các kỹ thuật feature engineering hiệu quả. Mô hình đạt được các chỉ số hiệu suất cao trên tập dữ liệu thử nghiệm:
+    \begin{itemize}
+        \item F1-Score: 0.86
+        \item AUPRC: 0.82
+        \item Precision: 0.82
+        \item Recall: 0.91
+    \end{itemize}
+    Với recall cao (91\%) và precision ở mức hợp lý (82), mô hình có khả năng phát hiện hơn 90\% các giao dịch gian lận, đồng thời hạn chế số lượng cảnh báo nhầm.
+    
+    \item \textbf{Feature Engineering hiệu quả}: Chúng tôi đã nghiên cứu và áp dụng các kỹ thuật feature engineering phù hợp với bài toán fraud detection, bao gồm các đặc trưng về thời gian (time\_diff, time\_diff\_log) và số tiền (log\_amount, amt\_to\_mean\_ratio, amt\_to\_median\_ratio, is\_high\_amount). Các đặc trưng này bổ sung thêm thông tin cho mô hình, đặc biệt là trong việc phát hiện các gian lận có tính chất liên tiếp trong thời gian ngắn.
+    
+    \item \textbf{Hệ thống giám sát Drift toàn diện}: Chúng tôi đã xây dựng hệ thống giám sát drift với khả năng phát hiện ba loại drift chính:
+    \begin{itemize}
+        \item \textbf{Data Drift}: Sử dụng KS test và PSI để phát hiện sự thay đổi trong phân phối dữ liệu đầu vào.
+        \item \textbf{Concept Drift}: Theo dõi F1-score và sử dụng KS test trên phân phối dự đoán để phát hiện sự thay đổi trong mối quan hệ giữa đặc trưng và nhãn.
+        \item \textbf{Prediction Drift}: Giám sát phân phối của các dự đoán để phát hiện bất thường.
+    \end{itemize}
+    Hệ thống đã được kiểm chứng với các thí nghiệm mô phỏng drift và phát hiện thành công 100\% các trường hợp.
+    
+    \item \textbf{Cơ chế Auto-Retrain tự động}: Chúng tôi đã triển khai cơ chế tự động huấn lại mô hình khi phát hiện drift vượt ngưỡng. Cơ chế này bao gồm:
+    \begin{itemize}
+        \item Kiểm tra drift định kỳ (có thể cấu hình interval).
+        \item Gửi cảnh báo qua webhook khi phát hiện drift.
+        \item Tự động kích hoạt quy trình huấn lại qua GitHub Actions.
+        \item So sánh và quyết định deploy mô hình mới dựa trên F1-score.
+    \end{itemize}
+    Cooldown 24 giờ giúp tránh huấn lại quá thường xuyên và tiết kiệm tài nguyên.
+    
+    \item \textbf{Tích hợp giám sát với Prometheus và Grafana}: Hệ thống được tích hợp với các công cụ giám sát tiêu chuẩn ngành, cung cấp:
+    \begin{itemize}
+        \item Thu thập metrics tự động với Prometheus.
+        \item Dashboard trực quan với Grafana.
+        \item Cấu hình cảnh báo với AlertManager.
+    \end{itemize}
+    
+    \item \textbf{Quản lý mô hình với MLflow}: MLflow được sử dụng để quản lý vòng đời của mô hình, bao gồm:
+    \begin{itemize}
+        \item Tracking experiments và parameters.
+        \item Lưu trữ artifacts (model, metrics, plots).
+        \item Model registry với version control.
+        \item Auto-promote lên Production khi đạt ngưỡng F1.
+    \end{itemize}
+\end{enumerate}
+
+So sánh với mục tiêu đề ra:
+
+\begin{center}
+\begin{tabular}{l|c|c}
+    \textbf{Mục tiêu} & \textbf{Đạt được} & \textbf{Trạng thái} \\
+    \hline
+    Xây dựng mô hình XGBoost & F1 = 0.86 & Đạt \\
+    Feature engineering hiệu quả & 6 features mới & Đạt \\
+    Giám sát data drift & PSI, KS test & Đạt \\
+    Giám sát concept drift & F1 monitoring & Đạt \\
+    Auto-retrain khi drift & Cơ chế tự động & Đạt \\
+    Tích hợp monitoring & Prometheus/Grafana & Đạt \\
+\end{tabular}
+\end{center}
+
+Tất cả các mục tiêu đã đề ra đều đã được hoàn thành.
+
+\section{Hạn chế}
+
+Trong quá trình thực hiện đề tài, chúng tôi đã gặp phải một số hạn chế sau:
+
+\begin{enumerate}
+    \item \textbf{Chưa triển khai real-time streaming}: Hệ thống hiện tại hoạt động ở chế độ batch, kiểm tra drift theo khoảng thời gian cố định. Chưa có khả năng xử lý dữ liệu theo thời gian thực (real-time) để phát hiện drift ngay khi xuất hiện.
+    
+    \item \textbf{Ngưỡng drift cố định}: Các ngưỡng phát hiện drift (PSI > 0.1, F1 < 0.5) được đặt cố định và chưa có cơ chế tự động điều chỉnh dựa trên đặc điểm của dữ liệu và yêu cầu kinh doanh.
+    
+    \item \textbf{Dữ liệu thử nghiệm hạn chế}: Bộ dữ liệu Kaggle Credit Card Fraud được thu thập vào năm 2013, có thể chưa phản ánh đầy đủ các hình thức gian lận hiện đại. Ngoài ra, các thí nghiệm drift được mô phỏng nhân tạo, chưa có cơ hội kiểm chứng trên dữ liệu thực tế.
+    
+    \item \textbf{Chưa tích hợp production}: Hệ thống mới chỉ dừng ở mức prototype, chưa được tích hợp vào hệ thống production thực tế để đánh giá trong điều kiện hoạt động thực.
+    
+    \item \textbf{Hạn chế về feature engineering}: Mặc dù đã áp dụng một số kỹ thuật feature engineering, chưa có nghiên cứu sâu về các feature nâng cao như aggregation theo khách hàng, sequence features, hoặc graph-based features.
+    
+    \item \textbf{So sánh hạn chế}: Chỉ tập trung vào thuật toán XGBoost, chưa có so sánh toàn diện với các thuật toán khác như LightGBM, CatBoost, hoặc các mô hình Deep Learning.
+\end{enumerate}
+
+\section{Hướng phát triển}
+
+Dựa trên các kết quả đạt được và các hạn chế đã nhận diện, chúng tôi đề xuất các hướng phát triển tiếp theo:
+
+\begin{enumerate}
+    \item \textbf{Triển khai real-time drift detection}:
+    \begin{itemize}
+        \item Tích hợp với Apache Kafka để xử lý streaming data.
+        \item Triển khai online learning để cập nhật mô hình liên tục.
+        \item Giảm thiểu độ trễ trong phát hiện drift.
+    \end{itemize}
+    
+    \item \textbf{Nâng cao khả năng thích ứng của hệ thống}:
+    \begin{itemize}
+        \item Tự động điều chỉnh ngưỡng drift dựa trên reinforcement learning.
+        \item Sử dụng adaptive thresholds thay vì fixed thresholds.
+        \item Tích hợp feedback từ người dùng để cải thiện độ chính xác.
+    \end{itemize}
+    
+    \item \textbf{Mở rộng feature engineering}:
+    \begin{itemize}
+        \item Nghiên cứu và áp dụng các feature nâng cao: customer aggregation, sequence features.
+        \item Tích hợp external data (dữ liệu từ các nguồn bên ngoài).
+        \item Khám phá graph-based features cho phát hiện fraud ring.
+    \end{itemize}
+    
+    \item \textbf{So sánh và lựa chọn mô hình tối ưu}:
+    \begin{itemize}
+        \item So sánh với LightGBM, CatBoost, và các mô hình Deep Learning (LSTM, Transformer).
+        \item Thử nghiệm ensemble methods để kết hợp ưu điểm của nhiều mô hình.
+        \item Tự động lựa chọn mô hình tốt nhất dựa trên hiệu suất.
+    \end{itemize}
+    
+    \item \textbf{Triển khai production-ready system}:
+    \begin{itemize}
+        \item Containerize với Docker và Kubernetes.
+        \item Thiết lập CI/CD pipeline cho ML.
+        \item Triển khai A/B testing để đánh giá mô hình trong thực tế.
+        \item Đảm bảo scalability và high availability.
+    \end{itemize}
+    
+    \item \textbf{Nghiên cứu privacy-preserving ML}:
+    \begin{itemize}
+        \item Áp dụng differential privacy để bảo vệ dữ liệu khách hàng.
+        \item Nghiên cứu federated learning cho phát hiện fraud across banks.
+    \end{itemize}
+    
+    \item \textbf{Cải thiện explainability}:
+    \begin{itemize}
+        \item Tích hợp SHAP hoặc LIME để giải thích dự đoán.
+        \item Xây dựng dashboard cho phép người dùng hiểu tại sao giao dịch bị đánh dấu là fraud.
+    \end{itemize}
+\end{enumerate}
+
+Với những kết quả đã đạt được và các hướng phát triển đề xuất, chúng tôi tin rằng đề tài đã đóng góp một phần quan trọng vào việc nghiên cứu và xây dựng hệ thống phát hiện gian lận thẻ tín dụng tại Việt Nam. Hệ thống được xây dựng trong đề tài này có thể được mở rộng và ứng dụng trong thực tế, góp phần bảo vệ khách hàng và các tổ chức tài chính trước các nguy cơ gian lận ngày càng tinh vi.
+
+\section{Lời kết}
+
+Kết thúc khóa luận tốt nghiệp, chúng tôi xin cảm ơn các thầy cô trong khoa Mạng Máy Tính và Truyền Thông, trường Đại học Công Nghệ Thông Tin, Đại học Quốc Gia Thành phố Hồ Chí Minh đã tạo điều kiện và hỗ trợ trong suốt quá trình học tập và thực hiện đề tài. Đặc biệt, chúng tôi xin cảm ơn các thầy cô hướng dẫn đã tận tình giúp đỡ và định hướng trong suốt thời gian thực hiện khóa luận.
+
+Chúng tôi cũng xin cảm ơn các đồng nghiệp và bạn bè đã chia sẻ kiến thức và hỗ trợ trong quá trình nghiên cứu.
+
+Mặc dù đã cố gắng hết sức, chắc chắn đề tài vẫn còn những thiếu sót. Chúng tôi rất mong nhận được sự góp ý của các thầy cô và các bạn để đề tài được hoàn thiện hơn.
+
+\begin{center}
+\textbf{TP. Hồ Chí Minh, tháng 5 năm 2024}
+\end{center}

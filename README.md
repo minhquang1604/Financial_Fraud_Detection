@@ -67,6 +67,11 @@ python -m src.train.train
 ```
 
 ### 4. Start API
+source venv/bin/activate
+```bash
+# Start all services (Kafka + MLflow + Monitoring)
+docker-compose up -d
+```
 
 ```bash
 python -m src.api.main

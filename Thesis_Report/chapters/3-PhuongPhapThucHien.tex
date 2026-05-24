@@ -1,0 +1,330 @@
+Chương này trình bày chi tiết về phương pháp thực hiện đề tài, bao gồm kiến trúc tổng thể của hệ thống, quy trình huấn luyện mô hình, các phương pháp giám sát drift, và cơ chế auto-retrain tự động.
+
+\section{Kiến trúc tổng thể của hệ thống}
+
+Hệ thống phát hiện gian lận thẻ tín dụng được xây dựng với kiến trúc MLOps, bao gồm các thành phần chính sau:
+
+\begin{enumerate}
+    \item \textbf{Model Training Pipeline}: Quy trình huấn luyện và đánh giá mô hình XGBoost.
+    \item \textbf{Model Registry}: Lưu trữ và quản lý các phiên bản mô hình với MLflow.
+    \item \textbf{Drift Monitoring}: Hệ thống giám sát data drift, concept drift, và prediction drift.
+    \item \textbf{Auto-Retrain Trigger}: Cơ chế tự động kích hoạt huấn lại khi phát hiện drift.
+    \item \textbf{Monitoring Dashboard}: Giao diện giám sát các chỉ số với Prometheus và Grafana.
+\end{enumerate}
+
+Hình \ref{fig:system_architecture} mô tả kiến trúc tổng thể của hệ thống:
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{img/system_architecture.png}
+    \caption{Kiến trúc tổng thể của hệ thống phát hiện gian lận}
+    \label{fig:system_architecture}
+\end{figure}
+
+Dưới đây là mô tả chi tiết từng thành phần trong hệ thống.
+
+\section{Huấn luyện mô hình XGBoost}
+
+Quy trình huấn luyện mô hình được thực hiện theo các bước sau:
+
+\subsection{Chuẩn bị dữ liệu}
+
+Dữ liệu huấn luyện được đọc từ file parquet và sắp xếp theo thời gian:
+
+\begin{verbatim}
+df = pd.read_parquet(TRAIN_DATA_PATH)
+df = df.sort_values("Time").reset_index(drop=True)
+\end{verbatim}
+
+Việc sắp xếp theo thời gian đảm bảo tính chất tự nhiên của dữ liệu và tránh leak thông tin từ tương lai vào quá khứ.
+
+Dữ liệu được chia theo tỷ lệ 80-20 cho train-test, sau đó train được chia tiếp 80-20 cho train-validation:
+
+\begin{verbatim}
+train_df, test_df = train_test_split(
+    df, test_size=0.2, stratify=df["Class"], random_state=42
+)
+train_df, val_df = train_test_split(
+    train_df, test_size=0.2, stratify=train_df["Class"], random_state=42
+)
+\end{verbatim}
+
+Tỷ lệ stratify được sử dụng để đảm bảo tỷ lệ fraud trong các tập con là tương đương nhau.
+
+\subsection{Feature Engineering}
+
+Feature engineering được thực hiện bằng hàm \texttt{engineer\_features} trong module \texttt{src/train/utils.py}. Hàm này tạo ra các đặc trưng mới dựa trên dữ liệu gốc:
+
+\begin{enumerate}
+    \item \textbf{Đặc trưng thời gian}:
+    \begin{itemize}
+        \item \texttt{time\_diff}: Khoảng thời gian giữa giao dịch hiện tại và giao dịch trước đó (đã giới hạn trong khoảng [0, 86400]).
+        \item \texttt{time\_diff\_log}: Log của time\_diff.
+    \end{itemize}
+    
+    \item \textbf{Đặc trưng số tiền}:
+    \begin{itemize}
+        \item \texttt{log\_amount}: Log của số tiền giao dịch.
+        \item \texttt{amt\_to\_mean\_ratio}: Tỷ lệ số tiền so với trung bình.
+        \item \texttt{amt\_to\_median\_ratio}: Tỷ lệ số tiền so với trung vị.
+        \item \texttt{is\_high\_amount}: Nhị phân cho các giao dịch lớn hơn phân vị 95\%.
+    \end{itemize}
+\end{enumerate}
+
+Quan trọng: Khi xử lý dữ liệu validation và test, cần sử dụng các thống kê (mean, median, quantile) từ dữ liệu huấn luyện để tránh data leakage:
+
+\begin{verbatim}
+if reference_df is None:
+    reference_df = df
+mean_amt = reference_df['Amount'].mean()
+median_amt = reference_df['Amount'].median()
+threshold_95 = reference_df['Amount'].quantile(0.95)
+\end{verbatim}
+
+Danh sách các đặc trưng cuối cùng được sử dụng cho mô hình:
+
+\begin{verbatim}
+features = [
+    # 28 PCA features
+    'V1', 'V2', ..., 'V28',
+    # Amount features
+    'log_amount', 'amt_to_mean_ratio', 'amt_to_median_ratio', 'is_high_amount',
+    # Time features
+    'time_diff', 'time_diff_log'
+]
+\end{verbatim}
+
+Tổng cộng có 34 đặc trưng.
+
+\subsection{Cấu hình mô hình XGBoost}
+
+Mô hình XGBoost được cấu hình với các tham số sau:
+
+\begin{verbatim}
+model = XGBClassifier(
+    n_estimators=500,          # Số cây trong ensemble
+    max_depth=6,               # Độ sâu tối đa của cây
+    learning_rate=0.05,        # Tốc độ học
+    scale_pos_weight=...,      # Trọng số cho lớp fraud
+    eval_metric="logloss",     # Metric đánh giá
+    random_state=42,           # Seed cho reproducibility
+    early_stopping_rounds=30   # Dừng sớm nếu không cải thiện
+)
+\end{verbatim}
+
+Tham số \texttt{scale\_pos\_weight} được tính dựa trên tỷ lệ mất cân bằng:
+
+\begin{verbatim}
+scale_pos_weight = count(negative) / count(positive)
+\end{verbatim}
+
+Trong đó negative là số giao dịch hợp pháp và positive là số gian lận.
+
+Mô hình được huấn luyện với early stopping để tránh overfitting:
+
+\begin{verbatim}
+model.fit(
+    X_train, y_train,
+    eval_set=[(X_val, y_val)],
+    verbose=False
+)
+\end{verbatim}
+
+Tìm ngưỡng tối ưu:
+
+Do bài toán fraud detection có sự chênh lệch chi phí giữa False Negative và False Positive, việc chọn ngưỡng phân loại phù hợp rất quan trọng. Chúng tôi sử dụng phương pháp tìm ngưỡng tối ưu dựa trên F1-score:
+
+\begin{verbatim}
+def find_best_threshold(y_true, y_probs):
+    precisions, recalls, thresholds = precision_recall_curve(y_true, y_probs)
+    f1_scores = 2 * precisions * recalls / (precisions + recalls + 1e-8)
+    best_idx = np.argmax(f1_scores)
+    return thresholds[best_idx], f1_scores[best_idx]
+\end{verbatim}
+
+Ngưỡng tối ưu được chọn là ngưỡng cho F1-score cao nhất trên tập validation.
+
+Quá trình huấn luyện và các thông số được log vào MLflow để theo dõi và quản lý.
+
+\section{Quản lý mô hình với MLflow}
+
+MLflow là nền tảng MLOps mã nguồn mở được sử dụng để quản lý vòng đời của mô hình machine learning.
+
+Trong hệ thống này, MLflow được cấu hình với:
+
+\begin{verbatim}
+MLFLOW_TRACKING_URI = "http://13.250.11.23:5000"
+EXPERIMENT_NAME = "FraudGuard_XGBoost"
+MODEL_NAME = "FraudDetectionModel"
+\end{verbatim}
+
+Các artifacts được log vào MLflow:
+\begin{itemize}
+    \item \textbf{Parameters}: n\_estimators, learning\_rate, threshold.
+    \item \textbf{Metrics}: F1, AUPRC.
+    \item \textbf{Model}: XGBoost model với signature.
+    \item \textbf{Artifacts}: Confusion matrix, threshold graph, feature importance.
+\end{itemize}
+
+Mô hình được đăng ký vào Model Registry với version tracking. Nếu F1 > 0.85, mô hình được tự động promote lên Production stage:
+
+\begin{verbatim}
+if f1 > 0.85:
+    client.transition_model_version_stage(
+        name=MODEL_NAME,
+        version=mv.version,
+        stage="Production"
+    )
+\end{verbatim}
+
+Ngoài ra, mô hình còn được backup local để đảm bảo khả năng khôi phục:
+
+\begin{verbatim}
+joblib.dump(model, "model/backup.pkl")
+\end{verbatim}
+
+\section{Hệ thống giám sát Drift}
+
+Hệ thống giám sát drift bao gồm hai thành phần chính: Drift Detector sử dụng phương pháp thống kê cơ bản, và Evidently Drift Monitor tích hợp thư viện Evidently AI.
+
+\subsection{Drift Detector (Phương pháp thống kê cơ bản)}
+
+Drift Detector được implement trong \texttt{src/monitoring/drift\_detector.py}, cung cấp các phương pháp phát hiện drift sau:
+
+\textbf{Data Drift Detection}:
+
+Sử dụng KS test để so sánh phân phối của các feature giữa dữ liệu tham chiếu và dữ liệu hiện tại:
+
+\begin{verbatim}
+def detect_data_drift(self, current_data):
+    drift_score = self._calculate_drift_score(
+        self.reference_data[self.feature_columns],
+        current_data[self.feature_columns]
+    )
+    # Tính PSI cho các feature quan trọng
+    for col in key_cols:
+        psi_result = self.calculate_psi(
+            self.reference_data[col],
+            current_data[col]
+        )
+\end{verbatim}
+
+\textbf{PSI Calculation}:
+
+PSI được tính bằng cách chia dữ liệu thành các buckets và so sánh tỷ lệ:
+
+\begin{verbatim}
+def calculate_psi(self, reference, current, buckets=10):
+    bins = np.linspace(min_val, max_val, buckets + 1)
+    ref_counts, _ = np.histogram(reference, bins=bins)
+    curr_counts, _ = np.histogram(current, bins=bins)
+    
+    ref_pcts = (ref_counts + 1) / (ref_counts.sum() + buckets)
+    curr_pcts = (curr_counts + 1) / (curr_counts.sum() + buckets)
+    
+    psi = np.sum((curr_pcts - ref_pcts) * np.log(curr_pcts / ref_pcts))
+\end{verbatim}
+
+Ngưỡng PSI:
+\begin{itemize}
+    \item PSI > 0.25: High drift
+    \item 0.1 < PSI < 0.25: Moderate drift
+    \item 0.05 < PSI < 0.1: Low drift
+    \item PSI < 0.05: Stable
+\end{itemize}
+
+\textbf{Concept Drift Detection}:
+
+Khi có nhãn thực tế (ground truth), concept drift được phát hiện dựa trên F1-score:
+
+\begin{verbatim}
+def detect_concept_drift(self, current_data, current_labels):
+    f1 = f1_score(current_labels, current_preds_binary)
+    return {
+        "concept_drift_detected": f1 < 0.5,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1
+    }
+\end{verbatim}
+
+Khi không có nhãn, sử dụng KS test trên phân phối dự đoán:
+
+\begin{verbatim}
+ks_stat, ks_pvalue = stats.ks_2samp(
+    self.reference_predictions,
+    current_predictions
+)
+prediction_drift = float(ks_stat > 0.1)
+\end{verbatim}
+
+\textbf{Prediction Distribution Monitoring}:
+
+Theo dõi phân phối của các dự đoán:
+
+\begin{verbatim}
+def get_prediction_distribution(self, data):
+    predictions = self.model.predict_proba(data[feature_columns])[:, 1]
+    return {
+        "mean": np.mean(predictions),
+        "std": np.std(predictions),
+        "q25", "q50", "q75": percentiles,
+        "fraud_ratio": np.mean(predictions > 0.5)
+    }
+\end{verbatim}
+
+Hàm generate\_full\_report tổng hợp tất cả các loại drift:
+
+\begin{verbatim}
+def generate_full_report(self, current_data, current_labels=None):
+    data_drift = self.detect_data_drift(current_data)
+    concept_drift = self.detect_concept_drift(current_data, current_labels)
+    pred_dist = self.get_prediction_distribution(current_data)
+    
+    return {
+        "data_drift": data_drift,
+        "concept_drift": concept_drift,
+        "prediction_distribution": pred_dist,
+        "alert_triggered": (
+            data_drift["drift_detected"] or
+            concept_drift["concept_drift_detected"]
+        )
+    }
+\end{verbatim}
+
+Evidently Drift Monitor được implement trong \texttt{src/monitoring/evidently\_drift.py}, cung cấp các phương pháp phát hiện drift nâng cao hơn bằng cách sử dụng thư viện Evidently AI.
+
+Bên cạnh đó, hệ thống còn tích hợp với Prometheus và Grafana để giám sát các chỉ số hoạt động. Prometheus được cấu hình trong \texttt{monitoring/prometheus/prometheus.yml} để thu thập metrics, trong khi Grafana cung cấp các dashboard trực quan trong \texttt{monitoring/grafana-dashboards/}.
+
+Hệ thống cũng bao gồm AlertManager với cấu hình trong \texttt{monitoring/alertmanager.yml} để gửi cảnh báo khi phát hiện drift.
+
+Auto-Retrain Trigger trong \texttt{src/monitoring/auto\_drift\_monitor.py} xử lý giám sát drift định kỳ và tự động huấn lại mô hình khi cần thiết.
+
+Trigger được cấu hình với các tham số như \texttt{DRIFT\_THRESHOLD = 0.05}, \texttt{F1\_THRESHOLD = 0.5}, \texttt{MIN\_NEW\_DATA = 1000}, và \texttt{RETRAIN\_COOLDOWN\_HOURS = 24}. Quy trình hoạt động bắt đầu bằng việc tải dữ liệu tham chiếu và mô hình hiện tại, sau đó kiểm tra dữ liệu mới trong staging.
+
+Khi phát hiện drift vượt ngưỡng, hệ thống gửi webhook, commit và push dữ liệu mới lên Git, đồng thời kích hoạt GitHub Actions workflow để huấn lại mô hình.
+
+Khi mô hình mới được huấn luyện, hệ thống so sánh F1-score giữa mô hình cũ và mô hình mới. Nếu mô hình mới có F1 cao hơn, nó sẽ được deploy; nếu không, mô hình cũ được giữ nguyên.
+
+Dữ liệu mới được thu thập từ hai nguồn: staging (chưa có nhãn) và labeled (đã có nhãn). Nếu tổng dữ liệu mới ít hơn 1000 bản ghi, quá trình huấn lại sẽ không được kích hoạt. Hệ thống cũng duy trì khoảng cách tối thiểu 24 giờ giữa các lần huấn lại để tránh việc huấn lại quá thường xuyên.
+
+Webhook được gửi đến GitHub Actions để kích hoạt quy trình huấn lại tự động. Payload bao gồm thông tin về loại kích hoạt là drift\_alert, giá trị PSI, và thời điểm xảy ra. Quy trình huấn lại được định nghĩa trong tệp .github/workflows/retrain.yml.
+
+Toàn bộ hệ thống hoạt động theo một vòng lặp khép kín: huấn luyện mô hình ban đầu, triển khai mô hình, liên tục giám sát drift, kích hoạt huấn lại khi phát hiện drift, đánh giá mô hình mới, và quay lại bước triển khai nếu mô hình mới vượt trội hơn.
+
+Chương này đã mô tả chi tiết cách xây dựng hệ thống, từ việc huấn luyện mô hình XGBoost, quản lý phiên bản với MLflow, phát hiện và xử lý drift, đến cơ chế tự động huấn lại. Chương tiếp theo sẽ trình bày các kết quả thực nghiệm và đánh giá hiệu suất của hệ thống.
+
+\section{Tổng kết chương}
+
+Chương 3 đã trình bày chi tiết về phương pháp thực hiện đề tài, bao gồm:
+
+\begin{itemize}
+    \item Kiến trúc tổng thể của hệ thống với các thành phần chính.
+    \item Quy trình huấn luyện mô hình XGBoost với feature engineering.
+    \item Quản lý mô hình với MLflow.
+    \item Hệ thống giám sát drift với nhiều phương pháp.
+    \item Cơ chế auto-retrain tự động.
+    \item Tích hợp giám sát với Prometheus/Grafana.
+\end{itemize}
+
+Các kết quả thực nghiệm sẽ được trình bày trong Chương 4.
