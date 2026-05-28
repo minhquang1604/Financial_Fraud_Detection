@@ -1,6 +1,8 @@
 import os
 import sys
 import time
+import logging
+import threading
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
@@ -15,8 +17,14 @@ from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTEN
 
 from src.train.utils import engineer_features, get_feature_columns
 from src.api.schemas import PredictionRequest, PredictionResponse
-from src.api.model_loader import get_model, predict_proba_safe
+from src.api.model_loader import load_model_from_mlflow
+from src.api.model_registry import BlueGreenRegistry
+from src.api.model_router import ModelRouter
+from src.api.health_checker import HealthChecker
+from src.api.rollback_manager import RollbackManager
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 PREDICTIONS_TOTAL = Counter(
     'fraud_predictions_total', 'Total predictions by class',
@@ -29,12 +37,24 @@ INFERENCE_LATENCY = Histogram(
 FRAUD_PROBABILITY = Gauge(
     'fraud_prediction_probability', 'Current fraud prediction probability'
 )
+MODEL_SWITCHES = Counter(
+    'model_switches_total', 'Total model switch events'
+)
+MODEL_ROLLBACKS = Counter(
+    'model_rollbacks_total', 'Total model rollback events'
+)
+MODEL_ACTIVE_VERSION = Gauge(
+    'model_active_version', 'Active model version number'
+)
+MODEL_ACTIVE_SWITCH_TIMESTAMP = Gauge(
+    'model_active_switch_timestamp_seconds', 'Timestamp of last model switch'
+)
 
-
-model = None
-model_data = None
-threshold = 0.5
-reference_stats = None
+registry = BlueGreenRegistry()
+router = None
+health_checker = None
+rollback_manager = None
+watcher = None
 
 
 class RunningStats:
@@ -50,7 +70,6 @@ class RunningStats:
         self.amounts.append(amount)
         if len(self.amounts) > self.window_size:
             self.amounts.pop(0)
-
         if len(self.amounts) >= 100:
             self.mean_amt = np.mean(self.amounts)
             self.median_amt = np.median(self.amounts)
@@ -67,33 +86,151 @@ class RunningStats:
 running_stats = RunningStats()
 
 
+MODEL_UPDATE_SECRET = os.environ.get("MODEL_UPDATE_SECRET", "")
+
+
+class ModelUpdateWatcher:
+    def __init__(self, registry: BlueGreenRegistry, checker: HealthChecker,
+                 rollback: RollbackManager, poll_interval: int = 60):
+        self._registry = registry
+        self._health_checker = checker
+        self._rollback_manager = rollback
+        self._poll_interval = poll_interval
+        self._running = False
+        self._thread = None
+        self._loaded_versions = set()
+
+    def start(self):
+        self._running = True
+        self._thread = threading.Thread(target=self._poll_loop, daemon=True,
+                                        name="model-watcher")
+        self._thread.start()
+        logger.info(f"ModelUpdateWatcher started (poll every {self._poll_interval}s)")
+
+    def stop(self):
+        self._running = False
+        logger.info("ModelUpdateWatcher stopped")
+
+    def _poll_loop(self):
+        while self._running:
+            try:
+                self._check_for_updates()
+            except Exception as e:
+                logger.error(f"Model update check failed: {e}")
+            time.sleep(self._poll_interval)
+
+    def _check_for_updates(self):
+        active = self._registry.get_active_model()
+        self._loaded_versions.add(active.version)
+
+        try:
+            import mlflow
+            client = mlflow.tracking.MlflowClient()
+            all_versions = client.search_model_versions(
+                f"name='FraudDetectionModel'"
+            )
+            staging_versions = [
+                v for v in all_versions
+                if v.current_stage in ("Staging", "Production")
+            ]
+            latest = max(staging_versions, key=lambda v: int(v.version))
+            if latest.version not in self._loaded_versions:
+                logger.info(
+                    f"New model version detected: v{latest.version} "
+                    f"(stage={latest.current_stage})"
+                )
+                self._load_and_validate(latest.version)
+        except Exception as e:
+            logger.warning(f"MLflow poll check failed: {e}")
+
+    def load_and_validate(self, version: str):
+        self._load_and_validate(version)
+
+    def _load_and_validate(self, version: str):
+        ok = self._registry.load_standby(version)
+        if not ok:
+            return False
+
+        candidate = self._registry.get_standby_slot()
+        report = self._health_checker.validate_candidate(candidate)
+
+        if report.passed:
+            if self._registry.swap():
+                MODEL_SWITCHES.inc()
+                MODEL_ACTIVE_VERSION.set(float(version))
+                MODEL_ACTIVE_SWITCH_TIMESTAMP.set(time.time())
+                self._loaded_versions.add(version)
+                logger.info(
+                    f"Successfully switched to model v{version}"
+                )
+                return True
+        else:
+            logger.warning(
+                f"Model v{version} failed health check: {report.message}"
+            )
+            candidate.status = "failed"
+        return False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global model, model_data, threshold, reference_stats
+    global router, health_checker, rollback_manager, watcher
     try:
-        model_data = get_model()
-        model = model_data["model"]
-        threshold = model_data.get("threshold", 0.5)
-        reference_stats = model_data.get("reference_stats")
-        print(f"Model loaded. Threshold: {threshold:.4f}")
+        registry.initialize()
+        router = ModelRouter(registry)
+        health_checker = HealthChecker(
+            registry=registry,
+            validation_path=os.environ.get("VALIDATION_DATA_PATH")
+        )
+        rollback_manager = RollbackManager(registry)
+        watcher = ModelUpdateWatcher(registry, health_checker, rollback_manager,
+                                     poll_interval=int(os.environ.get("MODEL_POLL_INTERVAL", "60")))
+        watcher.start()
+        info = registry.get_active_info()
+        MODEL_ACTIVE_VERSION.set(float(info["version"]))
+        MODEL_ACTIVE_SWITCH_TIMESTAMP.set(time.time())
+        logger.info(
+            f"Blue-Green initialized. Active: {info['active_color']} "
+            f"v{info['version']} (F1={info['metrics'].get('F1', 'N/A')})"
+        )
     except Exception as e:
-        print(f"Warning: Could not load model at startup: {e}")
-        model = None
-        model_data = None
+        logger.warning(f"Could not load model at startup: {e}")
+        router = ModelRouter(registry)
+        health_checker = HealthChecker(registry=registry)
+        rollback_manager = RollbackManager(registry)
     yield
+    if watcher:
+        watcher.stop()
 
 
 app = FastAPI(
-    title="Fraud Detection API",
-    description="Real-time Credit Card Fraud Detection API",
-    version="1.0.0",
+    title="Fraud Detection API (Blue-Green)",
+    description="Real-time Credit Card Fraud Detection with Blue-Green Model Deployment",
+    version="2.0.0",
     lifespan=lifespan
 )
 
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "model_loaded": model is not None}
+    info = registry.get_active_info()
+    standby = registry.get_standby_info()
+    return {
+        "status": "healthy" if registry.is_initialized else "degraded",
+        "model_loaded": registry.is_initialized,
+        "active_color": info["active_color"],
+        "active_model": {
+            "version": info["version"],
+            "run_id": info["run_id"],
+            "status": info["status"],
+            "loaded_at": info["loaded_at"],
+            "f1_score": info["metrics"].get("F1", "N/A"),
+        },
+        "standby_model": {
+            "version": standby["version"] or "none",
+            "status": standby["status"],
+        },
+    }
 
 
 @app.get("/metrics")
@@ -103,9 +240,9 @@ async def metrics():
 
 @app.post("/predict", response_model=PredictionResponse)
 async def predict(request: PredictionRequest):
-    if model is None:
+    if not registry.is_initialized:
         raise HTTPException(status_code=503, detail="Model not loaded")
-    
+
     start = time.time()
     try:
         raw_features = request.features.model_dump()
@@ -113,36 +250,109 @@ async def predict(request: PredictionRequest):
 
         amount = raw_features.get("Amount", 0)
         running_stats.update(amount)
-
         stats = running_stats.get_stats()
         fake_ref_df = pd.DataFrame({
             "Amount": [stats["mean_amt"], stats["median_amt"], stats["threshold_95"]]
         })
-        
+
         df = engineer_features(df, reference_df=fake_ref_df)
-        
         feature_cols = get_feature_columns()
         X = df[feature_cols]
-        
-        prob = predict_proba_safe(model_data, X)[0]
-        pred = int(prob >= threshold)
-        
+
+        prob, pred, model_version, model_run_id, latency = router.predict(X)
+
         PREDICTIONS_TOTAL.labels(prediction=str(pred)).inc()
         FRAUD_PROBABILITY.set(float(prob))
-        
+
+        if rollback_manager:
+            rollback_manager.record_prediction(
+                version=model_version,
+                latency_ms=latency * 1000,
+                success=True
+            )
+
         return PredictionResponse(
             transaction_time=raw_features['Time'],
             fraud_probability=float(prob),
             prediction=pred,
-            message="🚨🚨 FRAUD DETECTED 🚨🚨" if pred == 1 else "✅ Normal transaction"
+            model_version=model_version,
+            model_run_id=model_run_id,
+            message="FRAUD DETECTED" if pred == 1 else "Normal transaction"
         )
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
-        print(f"Predict error: {e}")
-        print(traceback.format_exc())
+        logger.error(f"Predict error: {e}")
+        logger.error(traceback.format_exc())
+        if router and rollback_manager:
+            try:
+                info = registry.get_active_info()
+                rollback_manager.record_prediction(
+                    version=info["version"],
+                    latency_ms=(time.time() - start) * 1000,
+                    success=False
+                )
+            except Exception:
+                pass
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         INFERENCE_LATENCY.observe(time.time() - start)
+
+
+@app.get("/model/info")
+async def model_info():
+    return {
+        "active": registry.get_active_info(),
+        "standby": registry.get_standby_info(),
+        "rollback": rollback_manager.stats if rollback_manager else {},
+    }
+
+
+@app.get("/model/history")
+async def model_history(limit: int = 10):
+    return {"history": registry.get_history(limit=limit)}
+
+
+@app.post("/model/rollback")
+async def model_rollback():
+    if not rollback_manager:
+        raise HTTPException(status_code=503, detail="Rollback manager not available")
+    if rollback_manager.execute_rollback():
+        MODEL_ROLLBACKS.inc()
+        info = registry.get_active_info()
+        return {
+            "status": "rolled_back",
+            "active_version": info["version"],
+            "active_color": info["active_color"],
+        }
+    raise HTTPException(status_code=400, detail="Rollback failed or cooldown active")
+
+
+@app.post("/model/update")
+async def model_update(version: str, secret: str = ""):
+    if MODEL_UPDATE_SECRET and secret != MODEL_UPDATE_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid secret")
+    if not watcher:
+        raise HTTPException(status_code=503, detail="Update watcher not available")
+
+    logger.info(f"Manual model update requested: v{version}")
+    ok = watcher.load_and_validate(version)
+    if ok:
+        info = registry.get_active_info()
+        return {
+            "status": "switched",
+            "active_version": info["version"],
+            "active_color": info["active_color"],
+        }
+    info = registry.get_active_info()
+    standby = registry.get_standby_info()
+    return {
+        "status": "failed",
+        "active_version": info["version"],
+        "standby_version": standby["version"],
+        "standby_status": standby["status"],
+    }
 
 
 if __name__ == "__main__":

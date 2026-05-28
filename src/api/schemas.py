@@ -43,4 +43,6 @@ class PredictionResponse(BaseModel):
     transaction_time: float
     fraud_probability: float
     prediction: int
+    model_version: str
+    model_run_id: str
     message: str

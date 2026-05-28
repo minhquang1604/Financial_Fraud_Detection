@@ -62,11 +62,26 @@ def load_model_from_mlflow(stage: str = None, version: int = None):
     
     print(f"Model loaded successfully!")
     
+    metrics = run.data.metrics
+    f1_score = float(metrics.get("F1", 0.0))
+    auprc = float(metrics.get("AUPRC", 0.0))
+    precision = float(metrics.get("precision", 0.0))
+    recall = float(metrics.get("recall", 0.0))
+    
     return {
         "model": model,
         "threshold": float(threshold),
         "features": get_feature_columns(),
-        "reference_stats": None
+        "reference_stats": None,
+        "version": target_version.version,
+        "run_id": run_id,
+        "metrics": {
+            "F1": f1_score,
+            "AUPRC": auprc,
+            "precision": precision,
+            "recall": recall,
+            "threshold": float(threshold),
+        }
     }
 
 
