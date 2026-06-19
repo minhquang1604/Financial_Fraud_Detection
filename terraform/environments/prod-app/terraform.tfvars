@@ -1,0 +1,6 @@
+region         = "ap-southeast-1"
+image_tag      = "latest"
+s3_bucket_name         = "retrain-data-fraud-detection"
+mlflow_artifact_bucket = "fraud-detection-uit-mlflow-artifacts"
+rds_username   = "mlflow_admin"
+rds_password   = "SuperSecretPassword123!"

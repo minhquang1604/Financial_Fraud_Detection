@@ -15,9 +15,11 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
+
   - job_name: 'fraud-detection-api'
+    metrics_path: /metrics
     static_configs:
-      - targets: ['host.docker.internal:8000']
+      - targets: ['mlops-prod-1098509742.ap-southeast-1.elb.amazonaws.com:80']
         labels:
           service: 'fraud-detection-api'
           environment: 'production'

@@ -2,6 +2,10 @@ import os
 import sys
 import json
 import time
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import pandas as pd
 from datetime import datetime
 from kafka import KafkaConsumer
@@ -13,12 +17,13 @@ from s3_manager import S3DataManager
 
 BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 TOPIC_NAME = "transaction_events"
-API_URL = os.environ.get("API_URL", "http://localhost:8000")
+ALB_DNS = os.environ.get("ALB_DNS", "")
+API_URL = os.environ.get("API_URL", f"http://{ALB_DNS}" if ALB_DNS else "http://localhost:8000")
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BATCH_SIZE = 1000
 
-S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "fraud-detection-data")
+S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "retrain-fraud-detection-data")
 USE_S3 = os.environ.get("USE_S3", "true").lower() == "true"
 
 FEATURE_COLS = [

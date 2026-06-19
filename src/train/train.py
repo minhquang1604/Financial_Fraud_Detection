@@ -46,13 +46,14 @@ TRAIN_DATA_PATH = os.path.join(
 
 MODEL_DIR = os.path.join(PROJECT_ROOT, "model")
 
+ALB_DNS = os.environ.get("ALB_DNS", "")
 MLFLOW_TRACKING_URI = os.environ.get(
     "MLFLOW_TRACKING_URI",
-    "http://13.250.11.23:5000"
+    f"http://{ALB_DNS}:5000" if ALB_DNS else "http://localhost:5000"
 )
 
-EXPERIMENT_NAME = "FraudGuard_XGBoost"
-MODEL_NAME = "FraudDetectionModel"
+EXPERIMENT_NAME = os.environ.get("EXPERIMENT_NAME", "FraudGuard_XGBoost")
+MODEL_NAME = os.environ.get("MODEL_NAME", "FraudDetectionModel")
 
 
 # =====================================================
@@ -105,6 +106,13 @@ def find_best_threshold(y_true, y_probs):
 def train():
 
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    client = mlflow.tracking.MlflowClient()
+    experiment = client.get_experiment_by_name(EXPERIMENT_NAME)
+    if experiment:
+        if experiment.lifecycle_stage == "deleted":
+            client.restore_experiment(experiment.experiment_id)
+    else:
+        client.create_experiment(EXPERIMENT_NAME)
     mlflow.set_experiment(EXPERIMENT_NAME)
 
     df = load_and_clean_data()

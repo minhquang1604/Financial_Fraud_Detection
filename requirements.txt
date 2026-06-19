@@ -2,7 +2,8 @@ duckdb
 numpy
 pandas
 joblib
-mlflow
+mlflow==2.14.3
+setuptools<70
 xgboost
 scikit-learn
 fastapi
@@ -16,3 +17,4 @@ prometheus-client
 scipy
 imbalanced-learn
 boto3
+python-dotenv

@@ -1,6 +1,11 @@
 import os
+import sys
 import json
 import time
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import pandas as pd
 from kafka import KafkaProducer
 from kafka.errors import KafkaError
@@ -14,13 +19,24 @@ BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 TOPIC_NAME = "transaction_events"
 DELAY_SECONDS = 0.1
 
+USE_S3 = os.environ.get("USE_S3", "true").lower() == "true"
+S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "retrain-data-fraud-detection")
+S3_STAGING_PATH = os.environ.get("S3_STAGING_PATH", "data/staging/staging_batch_v1.parquet")
 
-def get_data_path():
+
+def load_data() -> pd.DataFrame:
+    if USE_S3:
+        sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "mlops"))
+        from s3_manager import S3DataManager
+        manager = S3DataManager(bucket_name=S3_BUCKET_NAME)
+        print(f"Downloading staging data from s3://{S3_BUCKET_NAME}/{S3_STAGING_PATH}")
+        return manager.download_dataframe(S3_STAGING_PATH)
+
     if os.path.exists(KAFKA_DATA_PATH):
-        return KAFKA_DATA_PATH
+        return pd.read_parquet(KAFKA_DATA_PATH)
     files = [f for f in os.listdir(STAGING_DIR) if f.endswith('.parquet')]
     if files:
-        return os.path.join(STAGING_DIR, files[0])
+        return pd.read_parquet(os.path.join(STAGING_DIR, files[0]))
     raise FileNotFoundError(f"No data found in {STAGING_DIR}")
 
 
@@ -72,13 +88,12 @@ def prepare_payload(row):
 
 def run_producer():
     try:
-        data_path = get_data_path()
+        df = load_data()
     except FileNotFoundError as e:
         print(f"Error: {e}")
         return
     
-    df = pd.read_parquet(data_path)
-    print(f"Loaded {len(df)} records from {data_path}")
+    print(f"Loaded {len(df)} records")
     
     producer = create_producer()
     print(f"Producer connected to {BOOTSTRAP_SERVERS}")

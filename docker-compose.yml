@@ -58,24 +58,31 @@ services:
     networks:
       - fraud-network
 
+
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.14.0
-    container_name: fraud-mlflow
-    command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri sqlite:///mlflow.db
+    container_name: mlflow
+
     ports:
       - "5000:5000"
+
     environment:
-      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL:-}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
-      MLFLOW_ARTIFACT_ROOT: s3://${S3_BUCKET_NAME:-mlflow-artifacts}/mlflow/
+      - AWS_DEFAULT_REGION=ap-southeast-1
+      - MLFLOW_S3_ENDPOINT_URL=https://s3.amazonaws.com
+
     volumes:
-      - mlflow-data:/mlflow
-    networks:
-      - fraud-network
-    profiles:
-      - mlflow-local
+      - mlflow-db:/mlflow
+
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri sqlite:///mlflow/mlflow.db
+      --default-artifact-root s3://fraud-detection-uit-mlflow-artifacts
+
+    restart: unless-stopped
+
+
 
   prometheus:
     image: prom/prometheus:v2.47.0
@@ -149,7 +156,7 @@ networks:
     driver: bridge
 
 volumes:
-  mlflow-data:
+  mlflow-db:
   prometheus-data:
   grafana-data:
   alertmanager-data:
