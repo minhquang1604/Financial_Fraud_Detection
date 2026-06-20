@@ -1,88 +1,147 @@
-# Fraud Detection System
+# Fraud Detection System — End-to-End Cloud Pipeline
 
-MLOps pipeline cho fraud detection sử dụng XGBoost, Kafka, MLflow, Prometheus & Grafana.
+MLOps pipeline for fraud detection using XGBoost, Kafka, MLflow, Prometheus & Grafana. All infrastructure managed by Terraform on AWS ECS Fargate.
 
 ```
-Producer → Kafka → Consumer → S3 → Label → Train → S3 → API
-                              ↓
-                        Monitoring (Prometheus/Grafana)
-                              ↓
-                        GitHub Actions (Auto Retrain)
+Producer (local) ──Kafka──▶ Consumer (local) ──▶ API (ECS) ──▶ MLflow (ECS)
+                                                            │
+                                                     S3 (realtime/)
+                                                            │
+Drift Monitor (local) ◀─────────────────────────────────────┘
+      │
+      └── webhook ──▶ GitHub Actions ──▶ Retrain ──▶ MLflow (new model)
 ```
 
 ## Architecture
 
 ![Architecture](img/architecture.png)
 
-## Quick Start
+---
 
-### 1. Start Infrastructure
+## Prerequisites
+
+- AWS CLI configured (`aws configure`)
+- Terraform ≥ 1.5
+- Python ≥ 3.10
+- Docker
+- `pip install -r requirements.txt`
+- `pip install -r requirements-drift.txt` (if running drift monitor)
+
+---
+
+## Step 1: Provision Infrastructure
+
+Creates VPC, ECR repo, RDS (MLflow DB), ECS cluster, IAM roles, ALB, security groups.
+
 ```bash
-source venv/bin/activate
+cd terraform/environments/prod-infra
+terraform init
+terraform plan -out=tfplan
+terraform apply tfplan
 ```
 
+---
+
+## Step 2: Build & Push API Image to ECR
+
+Only the `api` image runs on ECS — everything else (producer, consumer, drift monitor) runs locally.
+
 ```bash
-docker-compose up -d
+./build-and-push.sh
 ```
 
-Services:
-| Service | Port | URL |
-|---------|------|-----|
-| Kafka | 9092 | localhost:9092 |
-| Zookeeper | 2181 | localhost:2181 |
-| Prometheus | 9090 | http://localhost:9090 |
-| Grafana | 3000 | http://localhost:3000 (admin/admin) |
-| AlertManager | 9093 | http://localhost:9093 |
-| Webhook Receiver | 5001 | http://localhost:5001 |
+---
 
-### 2. Install Dependencies
+## Step 3: Deploy Application Services
+
+Creates ECS services (MLflow, API, Kafka), task definitions, ALB rules, CloudWatch log groups.
 
 ```bash
-pip install -r requirements.txt
+cd terraform/environments/prod-app
+terraform init
+terraform plan -out=tfplan
+terraform apply tfplan
 ```
 
-### 3. Train Model
+After deployment, note the ALB DNS (printed in outputs or check AWS Console):
 
-```bash
-python -m src.train.train
+```
+http://mlops-prod-1098509742.ap-southeast-1.elb.amazonaws.com:5000  → MLflow
+http://mlops-prod-1098509742.ap-southeast-1.elb.amazonaws.com:8000  → API
 ```
 
-### 4. Start API
+---
+
+## Step 4: Get Kafka Public IP
+
+Kafka runs on ECS with a public IP (changes on restart).
 
 ```bash
-python -m src.api.main
-# API docs: http://localhost:8000/docs
+scripts/get-kafka-ip.sh
 ```
 
-### 5. Run Streaming Pipeline
+Update `.env` with the IP and ALB DNS:
 
 ```bash
-# Terminal 1: Producer (gửi data vào Kafka)
+KAFKA_BOOTSTRAP_SERVERS=18.143.138.45:9092
+ALB_DNS=mlops-prod-1098509742.ap-southeast-1.elb.amazonaws.com
+```
+
+The consumer, producer, and drift monitor all call `load_dotenv()` — they pick up `.env` automatically.
+
+---
+
+## Step 5: Run Producer (terminal 1)
+
+Publishes credit card transaction data to Kafka.
+
+```bash
+source .env
 python -m src.streaming.producer
+# or: ./scripts/run-producer.sh
+```
 
-# Terminal 2: Consumer (đọc từ Kafka → predict → upload S3)
+Expect ~57K records published.
+
+---
+
+## Step 6: Run Consumer (terminal 2)
+
+Reads from Kafka, calls API for predictions, uploads results to S3.
+
+```bash
+source .env
 python -m src.streaming.consumer
 ```
 
-### 6. Retrain
+The consumer reads `KAFKA_BOOTSTRAP_SERVERS`, `ALB_DNS` (for API URL), `S3_BUCKET_NAME`, and `USE_S3` from `.env` automatically.
+
+---
+
+## Step 7: Run Drift Monitor (terminal 3)
+
+Monitors data/concept drift via Evidently AI every 5 minutes. On drift, sends webhook to GitHub Actions which triggers retrain.
 
 ```bash
-# Retrain (--interval 300 là mỗi 300s check một lần nếu muốn có thể chỉnh xuống)
-python -m src.monitoring.auto_drift_monitor --model mlflow:Production --interval 300
+source .env
+python -m src.monitoring.auto_drift_monitor \
+  --model mlflow:Production \
+  --interval 300 \
+  --reference data/train/train_full.parquet
 ```
 
-**GitHub Secrets cần thiết:**
-- `MLFLOW_TRACKING_URI` - MLflow server URL
-- `AWS_ACCESS_KEY_ID` - AWS access key
-- `AWS_SECRET_ACCESS_KEY` - AWS secret key
-- `AWS_DEFAULT_REGION` - AWS region (vd: us-east-1)
-- `S3_BUCKET_NAME` - S3 bucket name
+Configurable thresholds in `auto_drift_monitor.py:51-54`:
+- `DRIFT_THRESHOLD = 0.05` — minimum data drift score to trigger alert
+- `F1_THRESHOLD = 0.5` — minimum F1 for model comparison
+- `MIN_NEW_DATA = 1000` — minimum records needed for retrain
+- `RETRAIN_COOLDOWN_HOURS = 24` — minimum time between retrains
+
+---
 
 ## API Usage
 
 ```bash
-# Predict
-curl -X POST http://localhost:8000/predict \
+curl -X POST http://${ALB_DNS}:8000/predict \
   -H "Content-Type: application/json" \
   -d '{
     "features": {
@@ -98,75 +157,75 @@ curl -X POST http://localhost:8000/predict \
   }'
 ```
 
-## Project Structure
-
-```
-fraud-detection-project/
-├── src/
-│   ├── api/                    # FastAPI service
-│   │   └── main.py            # /predict endpoint
-│   ├── streaming/             # Kafka pipeline
-│   │   ├── producer.py        # Gửi data vào Kafka
-│   │   └── consumer.py         # Đọc từ Kafka → predict → S3
-│   ├── pipeline/              # Data pipeline
-│   │   ├── label_joiner.py    # Gán nhãn từ dataset gốc
-│   │   ├── prepare_data.py     # Mix data (75% ref + 25% new)
-│   │   └── retrain_pipeline.py # Retrain với SMOTE
-│   ├── monitoring/            # Drift detection
-│   │   └── auto_drift_monitor.py # PSI monitoring + webhook
-│   ├── train/                # Training utilities
-│   │   └── utils.py           # Feature engineering
-│   └── mlops/                # MLOps utilities
-│       ├── s3_manager.py     # S3 operations
-│       └── data_version.py   # Data versioning
-├── monitoring/               # Monitoring config
-│   ├── prometheus.yml
-│   └── grafana-dashboards/
-├── model/                    # Trained models (.pkl)
-├── data/                     # Data files (gitignored)
-│   ├── raw/                  # creditcard.csv (reference)
-│   ├── train/                # Training data
-│   ├── realtime/             # Live data from Kafka
-│   └── labeled/              # Labeled data
-├── docker-compose.yml        # All services
-└── requirements.txt
-```
+---
 
 ## Environment Variables
 
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AWS_DEFAULT_REGION` | `ap-southeast-1` | AWS region |
+| `S3_BUCKET_NAME` | `retrain-data-fraud-detection` | S3 bucket for streaming/training data |
+| `USE_S3` | `true` | Store data in S3 vs local |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka broker address (public IP:9092 for cloud) |
+| `MLFLOW_TRACKING_URI` | `http://localhost:5000` | MLflow server URI |
+| `ALB_DNS` | — | ALB DNS name (for API URL fallback) |
+| `DRIFT_WEBHOOK_URL` | — | GitHub API URL for retrain dispatch |
+| `PAT_TOKEN` | — | GitHub personal access token |
+
+---
+
+## Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| Kafka connection refused | Kafka IP changes on restart — re-run `scripts/get-kafka-ip.sh` and update `.env` |
+| ECS tasks stuck PENDING | Check service quotas, subnet IP availability, or task IAM role |
+| Consumer can't reach API | Verify `ALB_DNS` in `.env` is correct; check API service is RUNNING in ECS |
+| Drift monitor fails to load model | Ensure MLflow is reachable and model is registered under `FraudDetectionModel` |
+| Terraform state locked | `rm .terraform.tfstate.lock.info` or from S3: `aws s3 rm s3://aws-terraform-remotebackend/.kafka/.../staterock` |
+
+---
+
+## Local Development (docker-compose)
+
+For offline development without AWS:
+
 ```bash
-# S3
-AWS_ACCESS_KEY_ID=your_access_key
-AWS_SECRET_ACCESS_KEY=your_secret_key
-AWS_DEFAULT_REGION=us-east-1
-S3_BUCKET_NAME=your-bucket-name
-USE_S3=true
+docker-compose up -d
+# Kafka :9092, MLflow :5000, Prometheus :9090, Grafana :3000
+python -m src.train.train
+python -m src.api.main
+python -m src.streaming.producer
+python -m src.streaming.consumer
+```
 
-# Kafka
-KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+---
 
-# MLflow
-MLFLOW_TRACKING_URI=http://13.229.113.113:5000
+## Project Structure
 
-# Webhook (for auto retrain)
-DRIFT_WEBHOOK_URL=https://api.github.com/repos/owner/repo/dispatches
-PAT_TOKEN=ghp_your_token
+```
+├── src/
+│   ├── api/                    # FastAPI service (/predict, /health)
+│   ├── streaming/              # Kafka producer & consumer
+│   ├── pipeline/               # Label joiner, data prep, retrain
+│   ├── monitoring/             # Drift detection (Evidently AI)
+│   ├── train/                  # Training utilities
+│   └── mlops/                  # S3 manager, data versioning
+├── terraform/
+│   ├── environments/
+│   │   ├── prod-infra/         # VPC, ECR, RDS, cluster, IAM, ALB, SGs
+│   │   └── prod-app/           # ECS services, task defs, ALB rules
+│   └── modules/                # Reusable Terraform modules
+├── scripts/                    # Utility scripts
+├── .env                        # Environment variables
+├── build-and-push.sh           # Build & push api image to ECR
+├── Dockerfile                  # Multi-stage (api, producer, consumer, drift-monitor, webhook)
+└── docker-compose.yml          # Local dev services
 ```
 
 ## Data Flow
 
-1. **Streaming**: `creditcard.csv (staging)` → Kafka → Consumer → **S3 (realtime/)**
+1. **Streaming**: `creditcard.csv (staging)` → Producer → Kafka → Consumer → API (predict) → **S3 (realtime/)**
 2. **Labeling**: **S3 (realtime/)** → Label Joiner → **S3 (labeled/)**
-3. **Training**: **S3 (labeled/)** + train data → Prepare → Retrain → **S3 (model/)**
-4. **Monitoring**: Prometheus metrics → Grafana dashboard
-
-## Monitoring
-
-- **Prometheus**: http://localhost:9090
-- **Grafana**: http://localhost:3000 (admin/admin)
-- **AlertManager**: http://localhost:9093
-
-Alerts configured:
-- High fraud prediction ratio
-- Model drift detected (PSI > 0.1)
-- Data drift detected
+3. **Training**: **S3 (labeled/)** + train data → Prepare → Retrain (SMOTE) → **MLflow (new model)**
+4. **Drift Detection**: S3 realtime data → Evidently AI → Prometheus metrics → Webhook → GitHub Actions → Retrain
