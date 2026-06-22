@@ -74,6 +74,7 @@ module "ecs" {
       port         = 8000
       desired_count = 1
       health_check_path = "/health"
+      health_check_grace_period = 120
       enable_service_connect = true
       environment = {
         MLFLOW_TRACKING_URI  = local.mlflow_uri
@@ -166,7 +167,21 @@ resource "aws_lb_listener_rule" "api" {
   }
 
   condition {
-    path_pattern { values = ["/api/*", "/predict", "/health", "/metrics", "/model/*"] }
+    path_pattern { values = ["/predict", "/health", "/model/*", "/docs", "/openapi.json"] }
+  }
+}
+
+resource "aws_lb_listener_rule" "api_metrics" {
+  listener_arn = local.infra.alb_listener_arn
+  priority     = 101
+
+  action {
+    type             = "forward"
+    target_group_arn = module.ecs.target_group_arns["api"]
+  }
+
+  condition {
+    path_pattern { values = ["/metrics"] }
   }
 }
 

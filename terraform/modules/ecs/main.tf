@@ -114,6 +114,7 @@ resource "aws_ecs_service" "this" {
   cluster         = var.cluster_id
   task_definition = aws_ecs_task_definition.this[each.key].arn
   desired_count   = each.value.desired_count
+  health_check_grace_period_seconds = each.value.health_check_grace_period
 
   capacity_provider_strategy {
     capacity_provider = each.value.use_spot ? "FARGATE_SPOT" : "FARGATE"

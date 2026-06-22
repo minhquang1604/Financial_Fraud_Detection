@@ -96,7 +96,7 @@ The consumer, producer, and drift monitor all call `load_dotenv()` — they pick
 Publishes credit card transaction data to Kafka.
 
 ```bash
-source .env
+source venv/bin/activate
 python -m src.streaming.producer
 # or: ./scripts/run-producer.sh
 ```
@@ -110,7 +110,7 @@ Expect ~57K records published.
 Reads from Kafka, calls API for predictions, uploads results to S3.
 
 ```bash
-source .env
+source venv/bin/activate
 python -m src.streaming.consumer
 ```
 
@@ -123,7 +123,7 @@ The consumer reads `KAFKA_BOOTSTRAP_SERVERS`, `ALB_DNS` (for API URL), `S3_BUCKE
 Monitors data/concept drift via Evidently AI every 5 minutes. On drift, sends webhook to GitHub Actions which triggers retrain.
 
 ```bash
-source .env
+source venv/bin/activate
 python -m src.monitoring.auto_drift_monitor \
   --model mlflow:Production \
   --interval 300 \

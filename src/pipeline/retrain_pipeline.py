@@ -518,6 +518,9 @@ class RetrainPipeline:
             logger.info("Logging model to MLflow...")
 
             model_dir = os.path.join(self.model_dir, "model")
+            if os.path.exists(model_dir):
+                import shutil as _shutil
+                _shutil.rmtree(model_dir)
             mlflow.sklearn.save_model(
                 sk_model=model,
                 path=model_dir,

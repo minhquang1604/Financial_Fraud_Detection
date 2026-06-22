@@ -52,7 +52,7 @@ resource "aws_lb_listener" "http" {
     type = "fixed-response"
     fixed_response {
       content_type = "text/plain"
-      message_body = "Fraud Detection API — use /api/predict or /api/docs"
+      message_body = "Fraud Detection API — use /predict, /health, /docs, /model/info"
       status_code  = "200"
     }
   }

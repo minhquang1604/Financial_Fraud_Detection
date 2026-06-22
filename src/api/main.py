@@ -175,17 +175,24 @@ class ModelUpdateWatcher:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global router, health_checker, rollback_manager, watcher
-    try:
-        registry.initialize()
-        router = ModelRouter(registry)
-        health_checker = HealthChecker(
-            registry=registry,
-            validation_path=os.environ.get("VALIDATION_DATA_PATH")
-        )
-        rollback_manager = RollbackManager(registry)
-        watcher = ModelUpdateWatcher(registry, health_checker, rollback_manager,
-                                     poll_interval=int(os.environ.get("MODEL_POLL_INTERVAL", "60")))
-        watcher.start()
+    for attempt in range(1, 13):
+        try:
+            registry.initialize()
+            break
+        except Exception as e:
+            logger.warning(f"Model init attempt {attempt}/12 failed: {e}")
+            if attempt < 12:
+                time.sleep(10)
+    router = ModelRouter(registry)
+    health_checker = HealthChecker(
+        registry=registry,
+        validation_path=os.environ.get("VALIDATION_DATA_PATH")
+    )
+    rollback_manager = RollbackManager(registry)
+    watcher = ModelUpdateWatcher(registry, health_checker, rollback_manager,
+                                 poll_interval=int(os.environ.get("MODEL_POLL_INTERVAL", "60")))
+    watcher.start()
+    if registry.is_initialized:
         info = registry.get_active_info()
         MODEL_ACTIVE_VERSION.set(float(info["version"]))
         MODEL_ACTIVE_SWITCH_TIMESTAMP.set(time.time())
@@ -193,11 +200,8 @@ async def lifespan(app: FastAPI):
             f"Blue-Green initialized. Active: {info['active_color']} "
             f"v{info['version']} (F1={info['metrics'].get('F1', 'N/A')})"
         )
-    except Exception as e:
-        logger.warning(f"Could not load model at startup: {e}")
-        router = ModelRouter(registry)
-        health_checker = HealthChecker(registry=registry)
-        rollback_manager = RollbackManager(registry)
+    else:
+        logger.warning("Model not loaded at startup — watcher will retry")
     yield
     if watcher:
         watcher.stop()
@@ -213,11 +217,13 @@ app = FastAPI(
 
 @app.get("/health")
 async def health_check():
+    if not registry.is_initialized:
+        raise HTTPException(status_code=503, detail="Model not loaded")
     info = registry.get_active_info()
     standby = registry.get_standby_info()
     return {
-        "status": "healthy" if registry.is_initialized else "degraded",
-        "model_loaded": registry.is_initialized,
+        "status": "healthy",
+        "model_loaded": True,
         "active_color": info["active_color"],
         "active_model": {
             "version": info["version"],
@@ -277,7 +283,7 @@ async def predict(request: PredictionRequest):
             prediction=pred,
             model_version=model_version,
             model_run_id=model_run_id,
-            message="FRAUD DETECTED" if pred == 1 else "Normal transaction"
+            message="🚨 FRAUD DETECTED" if pred == 1 else "✅ Normal transaction"
         )
     except HTTPException:
         raise

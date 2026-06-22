@@ -6,7 +6,7 @@ ECS_CLUSTER="mlops-prod"
 
 echo "=== Getting Kafka public IP ==="
 
-TASK_ARN=$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "${ECS_CLUSTER}-kafka" --region "$AWS_REGION" --query 'taskArns[0]' --output text)
+TASK_ARN=$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "${ECS_CLUSTER}-kafka-kafka" --region "$AWS_REGION" --query 'taskArns[0]' --output text)
 
 if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" = "None" ]; then
   echo "No running Kafka task found"

@@ -66,6 +66,7 @@ variable "services" {
     subnet_ids   = optional(list(string))
     health_check_path = optional(string)
     health_check_matcher = optional(string)
+    health_check_grace_period = optional(number, 0)
     environment  = optional(map(string), {})
     command      = optional(list(string), [])
     mount_path   = optional(string)
