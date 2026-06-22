@@ -1,9 +1,0 @@
-FROM python:3.10-slim AS webhook
-
-WORKDIR /app
-
-RUN pip install flask requests
-
-COPY src/api/webhook_receiver.py .
-
-CMD ["python", "webhook_receiver.py"]
